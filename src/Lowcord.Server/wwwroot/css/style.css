@@ -36,8 +36,7 @@ body {
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background-color: rgba(0, 0, 0, 0.75);
-  backdrop-filter: blur(8px);
+  background-color: rgba(0, 0, 0, 0.78);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -447,8 +446,7 @@ body {
   position: absolute;
   top: 8px;
   left: 8px;
-  background-color: rgba(0, 0, 0, 0.7);
-  backdrop-filter: blur(4px);
+  background-color: rgba(20, 20, 25, 0.88);
   padding: 4px 10px;
   border-radius: 6px;
   font-size: 12px;
@@ -495,8 +493,7 @@ body {
 }
 
 .screen-action-btn {
-  background-color: rgba(0, 0, 0, 0.7);
-  backdrop-filter: blur(4px);
+  background-color: rgba(20, 20, 25, 0.88);
   border: 1px solid var(--border-color);
   color: #fff;
   padding: 5px 8px;
@@ -519,8 +516,7 @@ body {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  background-color: rgba(0, 0, 0, 0.7);
-  backdrop-filter: blur(4px);
+  background-color: rgba(20, 20, 25, 0.88);
   border: 1px solid var(--border-color);
   padding: 4px 8px;
   border-radius: 6px;
@@ -1192,15 +1188,14 @@ body {
   height: 8px;
   border-radius: 50%;
   background-color: var(--green);
-  box-shadow: 0 0 8px var(--green);
-  animation: pulse-green 2s infinite;
+  animation: pulse-green 2s infinite ease-in-out;
   flex-shrink: 0;
+  will-change: opacity, transform;
 }
 
 @keyframes pulse-green {
-  0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(87, 242, 135, 0.7); }
-  70% { transform: scale(1.1); box-shadow: 0 0 0 6px rgba(87, 242, 135, 0); }
-  100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(87, 242, 135, 0); }
+  0%, 100% { opacity: 0.4; transform: scale(0.85); }
+  50% { opacity: 1; transform: scale(1.15); }
 }
 
 .pill-screen-text {

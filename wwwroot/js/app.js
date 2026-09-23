@@ -1110,8 +1110,24 @@ function startStreamTelemetry() {
   lastFramesSent = 0;
 
   streamStatsInterval = setInterval(async () => {
-    if (!isScreenSharing || peers.size === 0) {
-      updateLiveMetricsUI({ fps: 0, bitrateMbps: 0, rtt: 0, packetLoss: 0, reason: 'none' });
+    if (!isScreenSharing) {
+      updateLiveMetricsUI({ fps: 0, bitrateMbps: 0, rtt: 0, packetLoss: 0, reason: 'none', isAlone: false });
+      return;
+    }
+
+    // Si estás solo en la sala, medir los fotogramas del capturador de pantalla local
+    if (peers.size === 0) {
+      const vTrack = localScreenStream ? localScreenStream.getVideoTracks()[0] : null;
+      const settings = vTrack && vTrack.getSettings ? vTrack.getSettings() : {};
+      const captureFps = settings.frameRate ? Math.round(settings.frameRate) : screenQuality.fps;
+      updateLiveMetricsUI({
+        fps: captureFps,
+        bitrateMbps: 0,
+        rtt: 0,
+        packetLoss: 0,
+        reason: 'alone',
+        isAlone: true
+      });
       return;
     }
 
@@ -1132,7 +1148,7 @@ function startStreamTelemetry() {
         const timeDiffSec = (now - lastStatsTime) / 1000;
 
         stats.forEach(report => {
-          if (report.type === 'outbound-rtp' && report.kind === 'video') {
+          if (report.type === 'outbound-rtp' && (report.kind === 'video' || report.mediaType === 'video')) {
             if (report.framesPerSecond !== undefined) {
               fps = Math.round(report.framesPerSecond);
             } else if (report.framesSent !== undefined && timeDiffSec > 0 && lastFramesSent > 0) {
@@ -1155,7 +1171,7 @@ function startStreamTelemetry() {
             }
           }
 
-          if (report.type === 'remote-inbound-rtp' && report.kind === 'video') {
+          if (report.type === 'remote-inbound-rtp' && (report.kind === 'video' || report.mediaType === 'video')) {
             if (report.roundTripTime !== undefined) {
               rttMs = Math.round(report.roundTripTime * 1000);
             }
@@ -1175,7 +1191,7 @@ function startStreamTelemetry() {
         });
 
         lastStatsTime = now;
-        updateLiveMetricsUI({ fps, bitrateMbps, rtt: rttMs, packetLoss: packetLossPct, reason });
+        updateLiveMetricsUI({ fps, bitrateMbps, rtt: rttMs, packetLoss: packetLossPct, reason, isAlone: false });
         break;
       } catch(e) {}
     }
@@ -1189,22 +1205,22 @@ function stopStreamTelemetry() {
   }
 }
 
-function updateLiveMetricsUI({ fps, bitrateMbps, rtt, packetLoss, reason }) {
+function updateLiveMetricsUI({ fps, bitrateMbps, rtt, packetLoss, reason, isAlone }) {
   const pillFpsBadge = document.getElementById('pill-fps-badge');
   const pillBitrateBadge = document.getElementById('pill-bitrate-badge');
 
   if (pillFpsBadge) {
     pillFpsBadge.innerText = `${fps || 0} FPS`;
     pillFpsBadge.classList.remove('warn', 'bad');
-    if (fps < 30 && isScreenSharing) {
+    if (fps < 30 && isScreenSharing && !isAlone) {
       pillFpsBadge.classList.add('bad');
-    } else if (fps < 50 && screenQuality.fps === 60) {
+    } else if (fps < 50 && screenQuality.fps === 60 && !isAlone) {
       pillFpsBadge.classList.add('warn');
     }
   }
 
   if (pillBitrateBadge) {
-    pillBitrateBadge.innerText = `${bitrateMbps ? bitrateMbps.toFixed(1) : '0.0'} Mbps`;
+    pillBitrateBadge.innerText = isAlone ? 'Captura Lista' : `${bitrateMbps ? bitrateMbps.toFixed(1) : '0.0'} Mbps`;
   }
 
   // Actualizar botón de diagnóstico en el Dock inferior
@@ -1217,20 +1233,16 @@ function updateLiveMetricsUI({ fps, bitrateMbps, rtt, packetLoss, reason }) {
   if (cardLocalFps) {
     cardLocalFps.innerText = `${fps || 0} FPS`;
     cardLocalFps.classList.remove('warn', 'bad');
-    if (fps < 30 && isScreenSharing) {
-      cardLocalFps.classList.add('bad');
-    } else if (fps < 50 && screenQuality.fps === 60) {
-      cardLocalFps.classList.add('warn');
-    }
   }
   const cardLocalBitrate = document.getElementById('card-local-bitrate');
   if (cardLocalBitrate) {
-    cardLocalBitrate.innerText = `${bitrateMbps ? bitrateMbps.toFixed(1) : '0.0'} Mbps`;
+    cardLocalBitrate.innerText = isAlone ? 'Captura Lista' : `${bitrateMbps ? bitrateMbps.toFixed(1) : '0.0'} Mbps`;
   }
 
+  // Si el modal de estadísticas está abierto, actualizar detalles
   if (statFps) statFps.innerText = `${fps || 0} FPS`;
-  if (statBitrate) statBitrate.innerText = `${bitrateMbps ? bitrateMbps.toFixed(1) : '0.0'} Mbps`;
-  if (statRtt) statRtt.innerText = rtt > 0 ? `${rtt} ms` : 'Local';
+  if (statBitrate) statBitrate.innerText = isAlone ? 'P2P en espera' : `${bitrateMbps ? bitrateMbps.toFixed(1) : '0.0'} Mbps`;
+  if (statRtt) statRtt.innerText = isAlone ? 'Local (Solo en sala)' : (rtt > 0 ? `${rtt} ms` : 'Local');
   if (statPackets) statPackets.innerText = `${packetLoss}%`;
 
   if (statPacketsHealth) {
@@ -1245,7 +1257,11 @@ function updateLiveMetricsUI({ fps, bitrateMbps, rtt, packetLoss, reason }) {
 
   if (statDiagnosisBox && diagTitle && diagDesc && diagIcon) {
     statDiagnosisBox.classList.remove('diag-warning', 'diag-danger');
-    if (reason === 'cpu') {
+    if (isAlone) {
+      diagIcon.innerText = '●';
+      diagTitle.innerText = `Captura local activa (${screenQuality.resolution}p @ ${fps} FPS)`;
+      diagDesc.innerText = 'Tu pantalla se está capturando con aceleración GPU. Como estás solo en la sala (1/4), la tasa de subida (Mbps) se medirá en vivo en cuanto se conecte un amigo para no consumir tu internet innecesariamente.';
+    } else if (reason === 'cpu') {
       statDiagnosisBox.classList.add('diag-warning');
       diagIcon.innerText = '▲';
       diagTitle.innerText = 'Saturación de GPU/CPU por el juego';
@@ -1261,8 +1277,8 @@ function updateLiveMetricsUI({ fps, bitrateMbps, rtt, packetLoss, reason }) {
       diagDesc.innerText = `Transmitiendo a ${fps} FPS reales con excelente tasa de bits. Tu amigo recibe la imagen sin cortes.`;
     } else {
       diagIcon.innerText = '●';
-      diagTitle.innerText = 'Transmisión en espera';
-      diagDesc.innerText = 'Esperando a que tus amigos se conecten o sincronicen el video.';
+      diagTitle.innerText = 'Transmisión lista';
+      diagDesc.innerText = 'Sincronizando video con los participantes...';
     }
   }
 }
@@ -1859,6 +1875,9 @@ function addScreenCard(id, title, stream) {
         <button class="screen-action-btn btn-card-diag" id="btn-card-diag" title="Ver diagnóstico de transmisión y salud en tiempo real">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-7 14h-2v-4h2v4zm0-6h-2V7h2v4z"/></svg>
           Diagnóstico
+        </button>
+        <button class="screen-action-btn btn-gpu-saver" id="btn-gpu-saver" title="Ocultar la vista previa local para ahorrar GPU y eliminar el efecto espejo">
+          Ahorrar GPU (Ocultar)
         </button>` : ''}
         ${!isLocal ? `
         <div class="screen-volume-box" title="Volumen del sonido de la pantalla">
@@ -1880,6 +1899,13 @@ function addScreenCard(id, title, stream) {
         btnDiag.addEventListener('click', (e) => {
           e.stopPropagation();
           openStreamStats();
+        });
+      }
+      const btnGpu = card.querySelector('#btn-gpu-saver');
+      if (btnGpu) {
+        btnGpu.addEventListener('click', (e) => {
+          e.stopPropagation();
+          hideScreen('local', title);
         });
       }
     }
