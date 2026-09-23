@@ -148,6 +148,70 @@
     </div>
   </div>
 
+  <!-- MODAL DE CALIDAD DE PANTALLA COMPARTIDA -->
+  <div id="screen-quality-modal" class="modal-overlay" style="display: none;">
+    <div class="modal-card quality-card">
+      <div class="modal-header">
+        <div class="app-logo">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M20 18c1.1 0 1.99-.9 1.99-2L22 6c0-1.11-.9-2-2-2H4c-1.11 0-2 .89-2 2v10c0 1.1.89 2 2 2H0v2h24v-2h-4zM4 6h16v10H4V6z"/>
+          </svg>
+          <h2>Calidad de Transmisión</h2>
+        </div>
+        <p class="subtitle">Ajusta la resolución y fluidez antes de compartir</p>
+      </div>
+
+      <div class="settings-body">
+        <!-- SELECTOR DE RESOLUCIÓN -->
+        <div class="input-group">
+          <label>Resolución</label>
+          <div class="quality-selector-group">
+            <button type="button" id="btn-res-720" class="quality-pill-btn" data-res="720">
+              <span class="pill-title">720p HD</span>
+              <span class="pill-desc">Bajo consumo de GPU y datos</span>
+            </button>
+            <button type="button" id="btn-res-1080" class="quality-pill-btn active" data-res="1080">
+              <span class="pill-title">1080p FHD</span>
+              <span class="pill-desc">Máxima nitidez</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- SELECTOR DE TASA DE CUADROS (FPS) -->
+        <div class="input-group">
+          <label>Tasa de Cuadros (FPS)</label>
+          <div class="quality-selector-group">
+            <button type="button" id="btn-fps-30" class="quality-pill-btn" data-fps="30">
+              <span class="pill-title">30 FPS</span>
+              <span class="pill-desc">Ahorro de GPU (Películas / Series)</span>
+            </button>
+            <button type="button" id="btn-fps-60" class="quality-pill-btn active" data-fps="60">
+              <span class="pill-title">60 FPS</span>
+              <span class="pill-desc">Ultra fluido (Videojuegos)</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- TOGGLE DE VISTA PREVIA LOCAL (AHORRO CLAVE DE GPU) -->
+        <div class="toggle-group" style="margin-top: 14px;">
+          <label class="toggle-container">
+            <input type="checkbox" id="chk-local-preview">
+            <span class="toggle-slider"></span>
+          </label>
+          <div>
+            <span class="toggle-label" style="display:block; font-weight:600;">Ver mi propia pantalla en miniatura</span>
+            <span class="settings-hint" style="margin-top:2px;">Desactivado ahorra 10-15% de GPU adicional mientras juegas.</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-footer" style="display: flex; gap: 10px; margin-top: 24px;">
+        <button type="button" id="btn-cancel-screen" class="control-btn" style="flex: 1; justify-content: center;">Cancelar</button>
+        <button type="button" id="btn-confirm-screen" class="btn-primary" style="flex: 2;">Compartir Pantalla</button>
+      </div>
+    </div>
+  </div>
+
   <!-- BANNER DE RECONEXIÓN -->
   <div id="reconnect-banner" class="reconnect-banner" style="display: none;">
     <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46C19.54 15.03 20 13.57 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74C4.46 8.97 4 10.43 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/></svg>

@@ -1121,3 +1121,60 @@ body {
   user-select: none;
 }
 
+/* =========================================================
+   MODAL DE CALIDAD DE TRANSMISIÓN DE PANTALLA
+   ========================================================= */
+.quality-card {
+  max-width: 480px;
+}
+
+.quality-selector-group {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.quality-pill-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: 10px 14px;
+  background-color: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  color: var(--text-normal);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  text-align: left;
+}
+
+.quality-pill-btn:hover {
+  background-color: var(--bg-hover);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.quality-pill-btn.active {
+  background-color: rgba(88, 101, 242, 0.18);
+  border-color: var(--blurple);
+  color: #fff;
+}
+
+.pill-title {
+  font-size: 14px;
+  font-weight: 700;
+  display: block;
+}
+
+.pill-desc {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 2px;
+  font-weight: 400;
+}
+
+.quality-pill-btn.active .pill-desc {
+  color: #c7cbfe;
+}
+
+

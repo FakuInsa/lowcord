@@ -54,6 +54,13 @@ let activeKeybind = {
 };
 let noiseSuppressionEnabled = localStorage.getItem('lowcord_noise_suppression') !== 'false';
 
+// Configuración de pantalla compartida (resolución, FPS y ahorro de GPU)
+let screenQuality = {
+  resolution: parseInt(localStorage.getItem('lowcord_screen_res') || '1080', 10),
+  fps: parseInt(localStorage.getItem('lowcord_screen_fps') || '60', 10),
+  localPreview: localStorage.getItem('lowcord_screen_preview') === 'true' // false por defecto para máximo ahorro de GPU
+};
+
 let isPttActive = false;
 let isGateOpen = false;
 let gateHangoverTimer = null;
@@ -121,6 +128,16 @@ const btnRecordKeybind = document.getElementById('btn-record-keybind');
 const keybindDisplayText = document.getElementById('keybind-display-text');
 const keybindStatusHint = document.getElementById('keybind-status-hint');
 const chkNoiseSuppression = document.getElementById('chk-noise-suppression');
+
+// Modal de calidad de pantalla
+const screenQualityModal = document.getElementById('screen-quality-modal');
+const btnRes720 = document.getElementById('btn-res-720');
+const btnRes1080 = document.getElementById('btn-res-1080');
+const btnFps30 = document.getElementById('btn-fps-30');
+const btnFps60 = document.getElementById('btn-fps-60');
+const chkLocalPreview = document.getElementById('chk-local-preview');
+const btnCancelScreen = document.getElementById('btn-cancel-screen');
+const btnConfirmScreen = document.getElementById('btn-confirm-screen');
 
 iconMic.innerHTML = ICONS.micOn;
 iconScreen.innerHTML = ICONS.screen;
@@ -598,15 +615,27 @@ async function createPeerConnection(peerId, peerUserName, isInitiator) {
   return pc;
 }
 
-// Configurar codificador WebRTC para 60 FPS y 6 Mbps (calidad máxima sin lag)
+// Configurar codificador WebRTC dinámicamente según la calidad seleccionada
 function configureHighQualityVideoSender(sender) {
   try {
     const params = sender.getParameters();
     if (!params.encodings || params.encodings.length === 0) {
       params.encodings = [{}];
     }
-    params.encodings[0].maxBitrate = 6000000; // 6 Mbps
-    params.encodings[0].maxFramerate = 60;    // 60 FPS
+
+    let bitrate = 6000000;
+    if (screenQuality.resolution === 720 && screenQuality.fps === 30) {
+      bitrate = 1500000; // 1.5 Mbps (Ultra Ahorro)
+    } else if (screenQuality.resolution === 720 && screenQuality.fps === 60) {
+      bitrate = 3000000; // 3.0 Mbps (720p 60 FPS)
+    } else if (screenQuality.resolution === 1080 && screenQuality.fps === 30) {
+      bitrate = 3500000; // 3.5 Mbps (1080p 30 FPS)
+    } else {
+      bitrate = 6000000; // 6.0 Mbps (1080p 60 FPS)
+    }
+
+    params.encodings[0].maxBitrate = bitrate;
+    params.encodings[0].maxFramerate = screenQuality.fps;
     sender.setParameters(params).catch(e => {});
   } catch(e) {}
 }
@@ -765,70 +794,145 @@ if (btnReloadApp) {
 }
 
 // =========================================================
-// 5. COMPARTIR PANTALLA EN ALTA CALIDAD (60 FPS + AUDIO)
+// 5. COMPARTIR PANTALLA CON CALIDAD REGULABLE Y AHORRO GPU
 // =========================================================
-btnToggleScreen.addEventListener('click', async () => {
+btnToggleScreen.addEventListener('click', () => {
   if (isScreenSharing) {
     stopScreenShare();
   } else {
-    try {
-      getAudioContext();
-
-      // Capturar a 60 FPS, 1080p y con audio de alta fidelidad sin filtros de cancelación de eco
-      localScreenStream = await navigator.mediaDevices.getDisplayMedia({
-        video: {
-          cursor: 'always',
-          frameRate: { ideal: 60, max: 60 },
-          width: { ideal: 1920, max: 1920 },
-          height: { ideal: 1080, max: 1080 }
-        },
-        audio: {
-          echoCancellation: false,
-          noiseSuppression: false,
-          autoGainControl: false
-        }
-      });
-
-      const videoTrack = localScreenStream.getVideoTracks()[0];
-      const audioTrack = localScreenStream.getAudioTracks()[0];
-
-      if (!audioTrack) {
-        alert("Aviso sobre el Sonido:\n\nNo se detectó audio en la transmisión seleccionada.\n\n• Para PELÍCULAS o VIDEOS: Selecciona 'Pestaña de Chrome' y marca 'Compartir audio'.\n• Para JUEGOS: Selecciona 'Toda la pantalla' y marca 'Compartir audio del sistema'.\n\n(Nota: Windows no permite capturar sonido si seleccionas solo 'Ventana').");
-      } else {
-        console.log('[ScreenShare] Audio de pantalla capturado en alta fidelidad');
-      }
-
-      isScreenSharing = true;
-      btnToggleScreen.classList.add('active');
-      iconScreen.innerHTML = ICONS.screenStop;
-      labelScreen.innerText = 'Dejar de Compartir';
-
-      addScreenCard('local', `${myUserName} (Tu Pantalla)`, localScreenStream);
-
-      // Agregar pistas a todos los pares
-      for (const [peerId, peer] of peers) {
-        peer.screenSenders = [];
-        if (videoTrack) {
-          const vSender = peer.pc.addTrack(videoTrack, localScreenStream);
-          configureHighQualityVideoSender(vSender);
-          peer.screenSenders.push(vSender);
-        }
-        if (audioTrack) {
-          console.log(`[WebRTC] Transmitiendo pista de audio de pantalla a ${peerId}`);
-          const aSender = peer.pc.addTrack(audioTrack, localScreenStream);
-          peer.screenSenders.push(aSender);
-        }
-        peer.screenNegotiatedForPeer = true;
-        await renegotiatePeer(peerId);
-      }
-
-      videoTrack.onended = () => stopScreenShare();
-      if (connection) connection.invoke('UpdateMediaState', isMicMuted, true);
-    } catch (err) {
-      console.error('Error al compartir pantalla:', err);
-    }
+    screenQualityModal.style.display = 'flex';
   }
 });
+
+function initScreenQualityUI() {
+  if (!screenQualityModal) return;
+
+  btnRes720.classList.toggle('active', screenQuality.resolution === 720);
+  btnRes1080.classList.toggle('active', screenQuality.resolution === 1080);
+  btnFps30.classList.toggle('active', screenQuality.fps === 30);
+  btnFps60.classList.toggle('active', screenQuality.fps === 60);
+  chkLocalPreview.checked = screenQuality.localPreview;
+
+  btnRes720.addEventListener('click', () => {
+    screenQuality.resolution = 720;
+    btnRes720.classList.add('active');
+    btnRes1080.classList.remove('active');
+  });
+
+  btnRes1080.addEventListener('click', () => {
+    screenQuality.resolution = 1080;
+    btnRes1080.classList.add('active');
+    btnRes720.classList.remove('active');
+  });
+
+  btnFps30.addEventListener('click', () => {
+    screenQuality.fps = 30;
+    btnFps30.classList.add('active');
+    btnFps60.classList.remove('active');
+  });
+
+  btnFps60.addEventListener('click', () => {
+    screenQuality.fps = 60;
+    btnFps60.classList.add('active');
+    btnFps30.classList.remove('active');
+  });
+
+  chkLocalPreview.addEventListener('change', (e) => {
+    screenQuality.localPreview = e.target.checked;
+  });
+
+  btnCancelScreen.addEventListener('click', () => {
+    screenQualityModal.style.display = 'none';
+  });
+
+  screenQualityModal.addEventListener('click', (e) => {
+    if (e.target === screenQualityModal) {
+      screenQualityModal.style.display = 'none';
+    }
+  });
+
+  btnConfirmScreen.addEventListener('click', async () => {
+    screenQualityModal.style.display = 'none';
+    localStorage.setItem('lowcord_screen_res', screenQuality.resolution);
+    localStorage.setItem('lowcord_screen_fps', screenQuality.fps);
+    localStorage.setItem('lowcord_screen_preview', screenQuality.localPreview);
+    await startScreenShare();
+  });
+}
+
+async function startScreenShare() {
+  try {
+    getAudioContext();
+
+    const idealWidth = screenQuality.resolution === 720 ? 1280 : 1920;
+    const idealHeight = screenQuality.resolution === 720 ? 720 : 1080;
+    const idealFps = screenQuality.fps;
+
+    localScreenStream = await navigator.mediaDevices.getDisplayMedia({
+      video: {
+        cursor: 'always',
+        frameRate: { ideal: idealFps, max: idealFps },
+        width: { ideal: idealWidth, max: idealWidth },
+        height: { ideal: idealHeight, max: idealHeight }
+      },
+      audio: {
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl: false
+      }
+    });
+
+    const videoTrack = localScreenStream.getVideoTracks()[0];
+    const audioTrack = localScreenStream.getAudioTracks()[0];
+
+    if (!audioTrack) {
+      alert("Aviso sobre el Sonido:\n\nNo se detectó audio en la transmisión seleccionada.\n\n• Para PELÍCULAS o VIDEOS: Selecciona 'Pestaña de Chrome' y marca 'Compartir audio'.\n• Para JUEGOS: Selecciona 'Toda la pantalla' y marca 'Compartir audio del sistema'.\n\n(Nota: Windows no permite capturar sonido si seleccionas solo 'Ventana').");
+    } else {
+      console.log('[ScreenShare] Audio de pantalla capturado en alta fidelidad');
+    }
+
+    isScreenSharing = true;
+    btnToggleScreen.classList.add('active');
+    iconScreen.innerHTML = ICONS.screenStop;
+    labelScreen.innerText = 'Dejar de Compartir';
+
+    if (screenQuality.localPreview) {
+      addScreenCard('local', `${myUserName} (Tu Pantalla)`, localScreenStream);
+    } else {
+      let pill = document.getElementById('pill-local');
+      if (!pill) {
+        pill = document.createElement('div');
+        pill.id = 'pill-local';
+        pill.className = 'hidden-screen-pill';
+        pill.innerHTML = `${ICONS.screen} <span>Tu Pantalla (${screenQuality.resolution}p @ ${screenQuality.fps} FPS) - Transmitiendo (Vista previa apagada: Modo Ahorro GPU)</span>`;
+        hiddenScreensBar.appendChild(pill);
+      }
+      updateScreenLayout();
+    }
+
+    // Agregar pistas a todos los pares
+    for (const [peerId, peer] of peers) {
+      peer.screenSenders = [];
+      if (videoTrack) {
+        const vSender = peer.pc.addTrack(videoTrack, localScreenStream);
+        configureHighQualityVideoSender(vSender);
+        peer.screenSenders.push(vSender);
+      }
+      if (audioTrack) {
+        console.log(`[WebRTC] Transmitiendo pista de audio de pantalla a ${peerId}`);
+        const aSender = peer.pc.addTrack(audioTrack, localScreenStream);
+        peer.screenSenders.push(aSender);
+      }
+      peer.screenNegotiatedForPeer = true;
+      await renegotiatePeer(peerId);
+    }
+
+    videoTrack.onended = () => stopScreenShare();
+    if (connection) connection.invoke('UpdateMediaState', isMicMuted, true);
+  } catch (err) {
+    console.error('Error al compartir pantalla:', err);
+  }
+}
 
 async function stopScreenShare() {
   if (!isScreenSharing) return;
@@ -838,6 +942,8 @@ async function stopScreenShare() {
   labelScreen.innerText = 'Compartir';
 
   removeScreenCard('local');
+  const localPill = document.getElementById('pill-local');
+  if (localPill && localPill.parentNode) localPill.parentNode.removeChild(localPill);
 
   if (localScreenStream) {
     localScreenStream.getTracks().forEach(t => t.stop());
@@ -855,6 +961,7 @@ async function stopScreenShare() {
   }
 
   localScreenStream = null;
+  updateScreenLayout();
   if (connection) connection.invoke('UpdateMediaState', isMicMuted, false);
 }
 
@@ -1489,10 +1596,16 @@ function updateUserCount() {
   userCount.innerText = 1 + peers.size;
 }
 
-// Inicializar configuración avanzada de audio al cargar la página
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', initAdvancedAudioSettingsUI);
-} else {
+// Inicializar configuración avanzada de audio y calidad de pantalla al cargar la página
+function initPageComponents() {
   initAdvancedAudioSettingsUI();
+  initScreenQualityUI();
 }
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initPageComponents);
+} else {
+  initPageComponents();
+}
+
 
