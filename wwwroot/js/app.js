@@ -139,6 +139,29 @@ const chkLocalPreview = document.getElementById('chk-local-preview');
 const btnCancelScreen = document.getElementById('btn-cancel-screen');
 const btnConfirmScreen = document.getElementById('btn-confirm-screen');
 
+// Toggle de sonido de silenciado / activación (estilo Discord)
+let muteSoundsEnabled = localStorage.getItem('lowcord_mute_sounds') !== 'false';
+const chkMuteSound = document.getElementById('chk-mute-sound');
+
+// Miniatura flotante de vista previa y modal de diagnóstico
+const streamMiniPreview = document.getElementById('stream-mini-preview');
+const miniPreviewVideo = document.getElementById('mini-preview-video');
+const miniPreviewBadge = document.getElementById('mini-preview-badge');
+const btnCloseMiniPreview = document.getElementById('btn-close-mini-preview');
+const streamStatsModal = document.getElementById('stream-stats-modal');
+const btnCloseStreamStats = document.getElementById('btn-close-stream-stats');
+const statFps = document.getElementById('stat-fps');
+const statBitrate = document.getElementById('stat-bitrate');
+const statRtt = document.getElementById('stat-rtt');
+const statPackets = document.getElementById('stat-packets');
+const statPacketsHealth = document.getElementById('stat-packets-health');
+const statDiagnosisBox = document.getElementById('stat-diagnosis-box');
+const diagIcon = document.getElementById('diag-icon');
+const diagTitle = document.getElementById('diag-title');
+const diagDesc = document.getElementById('diag-desc');
+const btnQuick720p = document.getElementById('btn-quick-720p');
+const btnQuick1080p = document.getElementById('btn-quick-1080p');
+
 iconMic.innerHTML = ICONS.micOn;
 iconScreen.innerHTML = ICONS.screen;
 localMicBadge.innerHTML = ICONS.micOn;
@@ -636,6 +659,9 @@ function configureHighQualityVideoSender(sender) {
 
     params.encodings[0].maxBitrate = bitrate;
     params.encodings[0].maxFramerate = screenQuality.fps;
+    params.encodings[0].networkPriority = 'high';
+    params.degradationPreference = 'maintain-framerate';
+
     sender.setParameters(params).catch(e => {});
   } catch(e) {}
 }
@@ -899,15 +925,7 @@ async function startScreenShare() {
     if (screenQuality.localPreview) {
       addScreenCard('local', `${myUserName} (Tu Pantalla)`, localScreenStream);
     } else {
-      let pill = document.getElementById('pill-local');
-      if (!pill) {
-        pill = document.createElement('div');
-        pill.id = 'pill-local';
-        pill.className = 'hidden-screen-pill';
-        pill.innerHTML = `${ICONS.screen} <span>Tu Pantalla (${screenQuality.resolution}p @ ${screenQuality.fps} FPS) - Transmitiendo (Vista previa apagada: Modo Ahorro GPU)</span>`;
-        hiddenScreensBar.appendChild(pill);
-      }
-      updateScreenLayout();
+      renderLocalScreenPill();
     }
 
     // Agregar pistas a todos los pares
@@ -927,6 +945,9 @@ async function startScreenShare() {
       await renegotiatePeer(peerId);
     }
 
+    // Iniciar monitor de telemetría WebRTC en tiempo real
+    startStreamTelemetry();
+
     videoTrack.onended = () => stopScreenShare();
     if (connection) connection.invoke('UpdateMediaState', isMicMuted, true);
   } catch (err) {
@@ -940,6 +961,11 @@ async function stopScreenShare() {
   btnToggleScreen.classList.remove('active');
   iconScreen.innerHTML = ICONS.screen;
   labelScreen.innerText = 'Compartir';
+
+  // Detener telemetría y cerrar miniatura
+  stopStreamTelemetry();
+  toggleMiniPreview(false);
+  closeStreamStats();
 
   removeScreenCard('local');
   const localPill = document.getElementById('pill-local');
@@ -965,6 +991,296 @@ async function stopScreenShare() {
   if (connection) connection.invoke('UpdateMediaState', isMicMuted, false);
 }
 
+// Renderizar la barra de pantalla local con métricas en tiempo real y botones de acción
+function renderLocalScreenPill() {
+  let pill = document.getElementById('pill-local');
+  if (!pill) {
+    pill = document.createElement('div');
+    pill.id = 'pill-local';
+    pill.className = 'hidden-screen-pill';
+    hiddenScreensBar.appendChild(pill);
+  }
+
+  pill.innerHTML = `
+    <div class="pill-local-content">
+      <span class="status-pulse-dot"></span>
+      <span class="pill-screen-text">Tu Pantalla (<b id="pill-screen-resolution">${screenQuality.resolution}p @ ${screenQuality.fps} FPS</b>)</span>
+      <div class="pill-live-metrics" id="pill-live-metrics">
+        <span class="badge-fps" id="pill-fps-badge">-- FPS</span>
+        <span class="badge-bitrate" id="pill-bitrate-badge">-- Mbps</span>
+      </div>
+      <div class="pill-actions">
+        <button type="button" class="btn-pill-action" id="btn-toggle-preview-pip" title="Ver miniatura de tu transmisión">Ver cómo se ve</button>
+        <button type="button" class="btn-pill-action btn-pill-stats" id="btn-open-stream-stats" title="Abrir diagnóstico de salud y métricas">Diagnóstico</button>
+      </div>
+    </div>
+  `;
+
+  const btnPip = pill.querySelector('#btn-toggle-preview-pip');
+  if (btnPip) {
+    btnPip.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleMiniPreview();
+    });
+  }
+
+  const btnStats = pill.querySelector('#btn-open-stream-stats');
+  if (btnStats) {
+    btnStats.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openStreamStats();
+    });
+  }
+
+  updateScreenLayout();
+}
+
+// Control de miniatura flotante (PiP)
+let isMiniPreviewOpen = false;
+
+function toggleMiniPreview(forceState) {
+  if (forceState !== undefined) {
+    isMiniPreviewOpen = forceState;
+  } else {
+    isMiniPreviewOpen = !isMiniPreviewOpen;
+  }
+
+  if (!streamMiniPreview || !miniPreviewVideo) return;
+
+  if (isMiniPreviewOpen && isScreenSharing && localScreenStream) {
+    streamMiniPreview.style.display = 'flex';
+    if (miniPreviewVideo.srcObject !== localScreenStream) {
+      miniPreviewVideo.srcObject = localScreenStream;
+    }
+    miniPreviewVideo.play().catch(e => {});
+    if (miniPreviewBadge) {
+      miniPreviewBadge.innerText = `${screenQuality.resolution}p @ ${screenQuality.fps} FPS`;
+    }
+    const btnPip = document.getElementById('btn-toggle-preview-pip');
+    if (btnPip) btnPip.innerText = 'Ocultar miniatura';
+  } else {
+    streamMiniPreview.style.display = 'none';
+    miniPreviewVideo.srcObject = null;
+    isMiniPreviewOpen = false;
+    const btnPip = document.getElementById('btn-toggle-preview-pip');
+    if (btnPip) btnPip.innerText = 'Ver cómo se ve';
+  }
+}
+
+// Modal de diagnóstico de transmisión
+function openStreamStats() {
+  if (streamStatsModal) {
+    streamStatsModal.style.display = 'flex';
+    const targetEl = document.getElementById('stat-fps-target');
+    if (targetEl) targetEl.innerText = `Objetivo: ${screenQuality.fps} FPS`;
+  }
+}
+
+function closeStreamStats() {
+  if (streamStatsModal) {
+    streamStatsModal.style.display = 'none';
+  }
+}
+
+// Telemetría WebRTC en tiempo real para diagnosticar lag
+let streamStatsInterval = null;
+let lastBytesSent = 0;
+let lastStatsTime = 0;
+let lastFramesSent = 0;
+
+function startStreamTelemetry() {
+  stopStreamTelemetry();
+  lastBytesSent = 0;
+  lastStatsTime = performance.now();
+  lastFramesSent = 0;
+
+  streamStatsInterval = setInterval(async () => {
+    if (!isScreenSharing || peers.size === 0) {
+      updateLiveMetricsUI({ fps: 0, bitrateMbps: 0, rtt: 0, packetLoss: 0, reason: 'none' });
+      return;
+    }
+
+    for (const [peerId, peer] of peers) {
+      if (!peer.screenSenders || peer.screenSenders.length === 0) continue;
+      const vSender = peer.screenSenders.find(s => s.track && s.track.kind === 'video');
+      if (!vSender) continue;
+
+      try {
+        const stats = await peer.pc.getStats();
+        let fps = 0;
+        let bitrateMbps = 0;
+        let rttMs = 0;
+        let packetLossPct = 0;
+        let reason = 'none';
+
+        const now = performance.now();
+        const timeDiffSec = (now - lastStatsTime) / 1000;
+
+        stats.forEach(report => {
+          if (report.type === 'outbound-rtp' && report.kind === 'video') {
+            if (report.framesPerSecond !== undefined) {
+              fps = Math.round(report.framesPerSecond);
+            } else if (report.framesSent !== undefined && timeDiffSec > 0 && lastFramesSent > 0) {
+              fps = Math.round((report.framesSent - lastFramesSent) / timeDiffSec);
+            }
+            if (report.framesSent !== undefined) {
+              lastFramesSent = report.framesSent;
+            }
+
+            if (report.bytesSent !== undefined && timeDiffSec > 0 && lastBytesSent > 0) {
+              const bits = (report.bytesSent - lastBytesSent) * 8;
+              bitrateMbps = parseFloat((bits / (timeDiffSec * 1000000)).toFixed(1));
+            }
+            if (report.bytesSent !== undefined) {
+              lastBytesSent = report.bytesSent;
+            }
+
+            if (report.qualityLimitationReason) {
+              reason = report.qualityLimitationReason;
+            }
+          }
+
+          if (report.type === 'remote-inbound-rtp' && report.kind === 'video') {
+            if (report.roundTripTime !== undefined) {
+              rttMs = Math.round(report.roundTripTime * 1000);
+            }
+            if (report.packetsLost !== undefined && report.packetsReceived !== undefined) {
+              const total = report.packetsLost + report.packetsReceived;
+              if (total > 0) {
+                packetLossPct = parseFloat(((report.packetsLost / total) * 100).toFixed(1));
+              }
+            }
+          }
+
+          if (report.type === 'candidate-pair' && report.state === 'succeeded' && report.currentRoundTripTime !== undefined) {
+            if (rttMs === 0) {
+              rttMs = Math.round(report.currentRoundTripTime * 1000);
+            }
+          }
+        });
+
+        lastStatsTime = now;
+        updateLiveMetricsUI({ fps, bitrateMbps, rtt: rttMs, packetLoss: packetLossPct, reason });
+        break;
+      } catch(e) {}
+    }
+  }, 1000);
+}
+
+function stopStreamTelemetry() {
+  if (streamStatsInterval) {
+    clearInterval(streamStatsInterval);
+    streamStatsInterval = null;
+  }
+}
+
+function updateLiveMetricsUI({ fps, bitrateMbps, rtt, packetLoss, reason }) {
+  const pillFpsBadge = document.getElementById('pill-fps-badge');
+  const pillBitrateBadge = document.getElementById('pill-bitrate-badge');
+
+  if (pillFpsBadge) {
+    pillFpsBadge.innerText = `${fps || 0} FPS`;
+    pillFpsBadge.classList.remove('warn', 'bad');
+    if (fps < 30 && isScreenSharing) {
+      pillFpsBadge.classList.add('bad');
+    } else if (fps < 50 && screenQuality.fps === 60) {
+      pillFpsBadge.classList.add('warn');
+    }
+  }
+
+  if (pillBitrateBadge) {
+    pillBitrateBadge.innerText = `${bitrateMbps ? bitrateMbps.toFixed(1) : '0.0'} Mbps`;
+  }
+
+  if (statFps) statFps.innerText = `${fps || 0} FPS`;
+  if (statBitrate) statBitrate.innerText = `${bitrateMbps ? bitrateMbps.toFixed(1) : '0.0'} Mbps`;
+  if (statRtt) statRtt.innerText = rtt > 0 ? `${rtt} ms` : 'Local';
+  if (statPackets) statPackets.innerText = `${packetLoss}%`;
+
+  if (statPacketsHealth) {
+    if (packetLoss > 2.0) {
+      statPacketsHealth.innerText = 'Pérdida alta';
+      statPacketsHealth.style.color = 'var(--red)';
+    } else {
+      statPacketsHealth.innerText = 'Óptimo';
+      statPacketsHealth.style.color = 'var(--green)';
+    }
+  }
+
+  if (statDiagnosisBox && diagTitle && diagDesc && diagIcon) {
+    statDiagnosisBox.classList.remove('diag-warning', 'diag-danger');
+    if (reason === 'cpu') {
+      statDiagnosisBox.classList.add('diag-warning');
+      diagIcon.innerText = '▲';
+      diagTitle.innerText = 'Saturación de GPU/CPU por el juego';
+      diagDesc.innerText = 'Tu juego está consumiendo casi el 100% de la GPU. Limita los FPS del juego a 60 o 120 FPS en sus opciones de video, o baja la transmisión a 720p para que Windows no demore la captura.';
+    } else if (reason === 'bandwidth' || packetLoss > 2.0) {
+      statDiagnosisBox.classList.add('diag-danger');
+      diagIcon.innerText = '▲';
+      diagTitle.innerText = 'Conexión de subida saturada';
+      diagDesc.innerText = 'La velocidad de subida a internet no alcanza para la calidad actual. Haz clic en "Bajar a 720p 30 FPS" abajo para resolver los tirones.';
+    } else if (fps > 0) {
+      diagIcon.innerText = '●';
+      diagTitle.innerText = 'Transmisión fluida y sin demoras';
+      diagDesc.innerText = `Transmitiendo a ${fps} FPS reales con excelente tasa de bits. Tu amigo recibe la imagen sin cortes.`;
+    } else {
+      diagIcon.innerText = '●';
+      diagTitle.innerText = 'Transmisión en espera';
+      diagDesc.innerText = 'Esperando a que tus amigos se conecten o sincronicen el video.';
+    }
+  }
+}
+
+// Ajuste rápido de calidad en caliente (sin desconectar ni cortar llamada)
+async function applyStreamQualityLive(res, fps) {
+  screenQuality.resolution = res;
+  screenQuality.fps = fps;
+  localStorage.setItem('lowcord_screen_res', res);
+  localStorage.setItem('lowcord_screen_fps', fps);
+
+  const targetWidth = res === 720 ? 1280 : 1920;
+  const targetHeight = res === 720 ? 720 : 1080;
+
+  if (localScreenStream) {
+    const videoTrack = localScreenStream.getVideoTracks()[0];
+    if (videoTrack && videoTrack.applyConstraints) {
+      try {
+        await videoTrack.applyConstraints({
+          width: { ideal: targetWidth, max: targetWidth },
+          height: { ideal: targetHeight, max: targetHeight },
+          frameRate: { ideal: fps, max: fps }
+        });
+        console.log(`[WebRTC] Calidad de pantalla actualizada en vivo a ${res}p @ ${fps} FPS`);
+      } catch (err) {
+        console.warn('[WebRTC] applyConstraints error:', err);
+      }
+    }
+
+    for (const [peerId, peer] of peers) {
+      if (peer.screenSenders) {
+        const vSender = peer.screenSenders.find(s => s.track && s.track.kind === 'video');
+        if (vSender) {
+          configureHighQualityVideoSender(vSender);
+        }
+      }
+    }
+  }
+
+  const resLabel = document.getElementById('pill-screen-resolution');
+  if (resLabel) resLabel.innerText = `${res}p @ ${fps} FPS`;
+
+  if (miniPreviewBadge) miniPreviewBadge.innerText = `${res}p @ ${fps} FPS`;
+  const targetEl = document.getElementById('stat-fps-target');
+  if (targetEl) targetEl.innerText = `Objetivo: ${fps} FPS`;
+
+  if (btnRes720 && btnRes1080 && btnFps30 && btnFps60) {
+    btnRes720.classList.toggle('active', res === 720);
+    btnRes1080.classList.toggle('active', res === 1080);
+    btnFps30.classList.toggle('active', fps === 30);
+    btnFps60.classList.toggle('active', fps === 60);
+  }
+}
+
 async function renegotiatePeer(peerId) {
   const peer = peers.get(peerId);
   if (!peer || !connection) return;
@@ -982,13 +1298,67 @@ async function renegotiatePeer(peerId) {
 }
 
 // =========================================================
-// 6. CONTROL DE MICRÓFONO Y ENTRADA DE VOZ (VAD / PTT)
+// 6. CONTROL DE MICRÓFONO, SONIDOS Y ENTRADA (VAD / PTT)
 // =========================================================
+
+// Sonidos suaves de silenciado y desilenciado estilo Discord sintetizados con Web Audio API pura
+function playAudioCue(type) {
+  if (!muteSoundsEnabled) return;
+  try {
+    const ctx = getAudioContext();
+    if (!ctx) return;
+    if (ctx.state === 'suspended') {
+      ctx.resume().catch(() => {});
+    }
+
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+
+    osc.type = 'sine';
+
+    if (type === 'mute') {
+      // Tono descendente suave (estilo Discord mute): 440 Hz a 310 Hz
+      osc.frequency.setValueAtTime(440, now);
+      osc.frequency.exponentialRampToValueAtTime(310, now + 0.12);
+
+      gain.gain.setValueAtTime(0.0001, now);
+      gain.gain.linearRampToValueAtTime(0.04, now + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.15);
+
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+
+      osc.start(now);
+      osc.stop(now + 0.16);
+    } else if (type === 'unmute') {
+      // Tono ascendente suave (estilo Discord unmute): 310 Hz a 450 Hz
+      osc.frequency.setValueAtTime(310, now);
+      osc.frequency.exponentialRampToValueAtTime(450, now + 0.12);
+
+      gain.gain.setValueAtTime(0.0001, now);
+      gain.gain.linearRampToValueAtTime(0.04, now + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.15);
+
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+
+      osc.start(now);
+      osc.stop(now + 0.16);
+    }
+  } catch (e) {
+    console.warn('[AudioCue] Error al sintetizar sonido:', e);
+  }
+}
+
 btnToggleMic.addEventListener('click', toggleMic);
 
 function toggleMic() {
   isMicMuted = !isMicMuted;
   const ctx = getAudioContext();
+
+  // Reproducir sonido suave de confirmación
+  playAudioCue(isMicMuted ? 'mute' : 'unmute');
 
   if (isMicMuted) {
     if (micGateGainNode) {
@@ -1596,10 +1966,52 @@ function updateUserCount() {
   userCount.innerText = 1 + peers.size;
 }
 
-// Inicializar configuración avanzada de audio y calidad de pantalla al cargar la página
+// Inicializar eventos de telemetría, miniatura y sonidos
+function initTelemetryAndMiniPreviewUI() {
+  if (chkMuteSound) {
+    chkMuteSound.checked = muteSoundsEnabled;
+    chkMuteSound.addEventListener('change', (e) => {
+      muteSoundsEnabled = e.target.checked;
+      localStorage.setItem('lowcord_mute_sounds', muteSoundsEnabled);
+    });
+  }
+
+  if (btnCloseMiniPreview) {
+    btnCloseMiniPreview.addEventListener('click', () => {
+      toggleMiniPreview(false);
+    });
+  }
+
+  if (btnCloseStreamStats) {
+    btnCloseStreamStats.addEventListener('click', closeStreamStats);
+  }
+
+  if (streamStatsModal) {
+    streamStatsModal.addEventListener('click', (e) => {
+      if (e.target === streamStatsModal) {
+        closeStreamStats();
+      }
+    });
+  }
+
+  if (btnQuick720p) {
+    btnQuick720p.addEventListener('click', () => {
+      applyStreamQualityLive(720, 30);
+    });
+  }
+
+  if (btnQuick1080p) {
+    btnQuick1080p.addEventListener('click', () => {
+      applyStreamQualityLive(1080, 60);
+    });
+  }
+}
+
+// Inicializar configuración avanzada de audio, calidad de pantalla y telemetría al cargar la página
 function initPageComponents() {
   initAdvancedAudioSettingsUI();
   initScreenQualityUI();
+  initTelemetryAndMiniPreviewUI();
 }
 
 if (document.readyState === 'loading') {
@@ -1607,5 +2019,6 @@ if (document.readyState === 'loading') {
 } else {
   initPageComponents();
 }
+
 
 
