@@ -1,0 +1,17 @@
+services:
+  lowcord-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: lowcord-server
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      - ASPNETCORE_HTTP_PORTS=8080
+      - ASPNETCORE_ENVIRONMENT=Production
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

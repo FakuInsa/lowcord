@@ -1,0 +1,6 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Lowcord.Client/Lowcord.Client.csproj" />
+    <Project Path="src/Lowcord.Server/Lowcord.Server.csproj" />
+  </Folder>
+</Solution>

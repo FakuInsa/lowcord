@@ -1,0 +1,42 @@
+# ========================================================
+# Lowcord - Git Ignore Configuration
+# ========================================================
+
+# Compilacion y Salidas (.NET)
+[Bb]in/
+[Oo]bj/
+dist/
+publish/
+EJECUTABLES_LISTOS/Servidor/
+
+# Binarios ejecutables y bibliotecas pesadas (>100MB bloqueados por GitHub)
+*.exe
+*.dll
+*.pdb
+*.lib
+*.so
+*.dylib
+
+# Archivos de cache de WebView2 / Chromium
+*.WebView2/
+EBWebView/
+Crashpad/
+
+# Registros y configuraciones locales
+*.log
+cloudflared.log
+server.txt
+
+# Entornos de desarrollo e IDEs
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Archivos de sistema operativo
+.DS_Store
+Thumbs.db
+desktop.ini
