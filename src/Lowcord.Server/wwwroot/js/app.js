@@ -161,6 +161,8 @@ const diagTitle = document.getElementById('diag-title');
 const diagDesc = document.getElementById('diag-desc');
 const btnQuick720p = document.getElementById('btn-quick-720p');
 const btnQuick1080p = document.getElementById('btn-quick-1080p');
+const btnDockStreamStats = document.getElementById('btn-dock-stream-stats');
+const dockStreamStatsText = document.getElementById('dock-stream-stats-text');
 
 iconMic.innerHTML = ICONS.micOn;
 iconScreen.innerHTML = ICONS.screen;
@@ -947,6 +949,7 @@ async function startScreenShare() {
 
     // Iniciar monitor de telemetría WebRTC en tiempo real
     startStreamTelemetry();
+    if (btnDockStreamStats) btnDockStreamStats.style.display = 'inline-flex';
 
     videoTrack.onended = () => stopScreenShare();
     if (connection) connection.invoke('UpdateMediaState', isMicMuted, true);
@@ -966,6 +969,7 @@ async function stopScreenShare() {
   stopStreamTelemetry();
   toggleMiniPreview(false);
   closeStreamStats();
+  if (btnDockStreamStats) btnDockStreamStats.style.display = 'none';
 
   removeScreenCard('local');
   const localPill = document.getElementById('pill-local');
@@ -1001,6 +1005,9 @@ function renderLocalScreenPill() {
     hiddenScreensBar.appendChild(pill);
   }
 
+  const localCard = document.getElementById('screen-local');
+  const hasLocalCard = !!localCard;
+
   pill.innerHTML = `
     <div class="pill-local-content">
       <span class="status-pulse-dot"></span>
@@ -1010,11 +1017,19 @@ function renderLocalScreenPill() {
         <span class="badge-bitrate" id="pill-bitrate-badge">-- Mbps</span>
       </div>
       <div class="pill-actions">
-        <button type="button" class="btn-pill-action" id="btn-toggle-preview-pip" title="Ver miniatura de tu transmisión">Ver cómo se ve</button>
+        ${hasLocalCard ? '<button type="button" class="btn-pill-action" id="btn-restore-local-card">Mostrar</button>' : '<button type="button" class="btn-pill-action" id="btn-toggle-preview-pip" title="Ver miniatura de tu transmisión">Ver cómo se ve</button>'}
         <button type="button" class="btn-pill-action btn-pill-stats" id="btn-open-stream-stats" title="Abrir diagnóstico de salud y métricas">Diagnóstico</button>
       </div>
     </div>
   `;
+
+  const btnRestore = pill.querySelector('#btn-restore-local-card');
+  if (btnRestore) {
+    btnRestore.addEventListener('click', (e) => {
+      e.stopPropagation();
+      restoreScreen('local');
+    });
+  }
 
   const btnPip = pill.querySelector('#btn-toggle-preview-pip');
   if (btnPip) {
@@ -1190,6 +1205,27 @@ function updateLiveMetricsUI({ fps, bitrateMbps, rtt, packetLoss, reason }) {
 
   if (pillBitrateBadge) {
     pillBitrateBadge.innerText = `${bitrateMbps ? bitrateMbps.toFixed(1) : '0.0'} Mbps`;
+  }
+
+  // Actualizar botón de diagnóstico en el Dock inferior
+  if (dockStreamStatsText) {
+    dockStreamStatsText.innerText = `${fps || 0} FPS • Diagnóstico`;
+  }
+
+  // Actualizar insignias en la tarjeta grande de pantalla local (si la vista previa está visible)
+  const cardLocalFps = document.getElementById('card-local-fps');
+  if (cardLocalFps) {
+    cardLocalFps.innerText = `${fps || 0} FPS`;
+    cardLocalFps.classList.remove('warn', 'bad');
+    if (fps < 30 && isScreenSharing) {
+      cardLocalFps.classList.add('bad');
+    } else if (fps < 50 && screenQuality.fps === 60) {
+      cardLocalFps.classList.add('warn');
+    }
+  }
+  const cardLocalBitrate = document.getElementById('card-local-bitrate');
+  if (cardLocalBitrate) {
+    cardLocalBitrate.innerText = `${bitrateMbps ? bitrateMbps.toFixed(1) : '0.0'} Mbps`;
   }
 
   if (statFps) statFps.innerText = `${fps || 0} FPS`;
@@ -1810,10 +1846,20 @@ function addScreenCard(id, title, stream) {
       <div class="screen-card-header">
         ${ICONS.screen}
         <span>${title}</span>
+        ${isLocal ? `
+          <div class="card-live-metrics">
+            <span class="badge-fps" id="card-local-fps">-- FPS</span>
+            <span class="badge-bitrate" id="card-local-bitrate">-- Mbps</span>
+          </div>` : ''}
         ${!isLocal ? `<span class="screen-audio-badge">Audio en espera</span>` : ''}
       </div>
       <video autoplay playsinline muted></video>
       <div class="screen-card-actions">
+        ${isLocal ? `
+        <button class="screen-action-btn btn-card-diag" id="btn-card-diag" title="Ver diagnóstico de transmisión y salud en tiempo real">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-7 14h-2v-4h2v4zm0-6h-2V7h2v4z"/></svg>
+          Diagnóstico
+        </button>` : ''}
         ${!isLocal ? `
         <div class="screen-volume-box" title="Volumen del sonido de la pantalla">
           <span class="screen-vol-icon">${ICONS.vol}</span>
@@ -1827,6 +1873,16 @@ function addScreenCard(id, title, stream) {
 
     const video = card.querySelector('video');
     video.srcObject = stream;
+
+    if (isLocal) {
+      const btnDiag = card.querySelector('#btn-card-diag');
+      if (btnDiag) {
+        btnDiag.addEventListener('click', (e) => {
+          e.stopPropagation();
+          openStreamStats();
+        });
+      }
+    }
 
     if (!isLocal) {
       const volSlider = card.querySelector('.screen-vol-slider');
@@ -1891,16 +1947,20 @@ function hideScreen(id, title) {
   card.style.display = 'none';
   hiddenScreens.add(id);
 
-  let pill = document.getElementById(`pill-${id}`);
-  if (!pill) {
-    pill = document.createElement('div');
-    pill.id = `pill-${id}`;
-    pill.className = 'hidden-screen-pill';
-    pill.innerHTML = `${ICONS.screen} <span>${title} (Oculta)</span> <strong>Mostrar</strong>`;
-    pill.addEventListener('click', () => {
-      restoreScreen(id);
-    });
-    hiddenScreensBar.appendChild(pill);
+  if (id === 'local') {
+    renderLocalScreenPill();
+  } else {
+    let pill = document.getElementById(`pill-${id}`);
+    if (!pill) {
+      pill = document.createElement('div');
+      pill.id = `pill-${id}`;
+      pill.className = 'hidden-screen-pill';
+      pill.innerHTML = `${ICONS.screen} <span>${title} (Oculta)</span> <strong>Mostrar</strong>`;
+      pill.addEventListener('click', () => {
+        restoreScreen(id);
+      });
+      hiddenScreensBar.appendChild(pill);
+    }
   }
 
   updateScreenLayout();
@@ -2004,6 +2064,10 @@ function initTelemetryAndMiniPreviewUI() {
     btnQuick1080p.addEventListener('click', () => {
       applyStreamQualityLive(1080, 60);
     });
+  }
+
+  if (btnDockStreamStats) {
+    btnDockStreamStats.addEventListener('click', openStreamStats);
   }
 }
 

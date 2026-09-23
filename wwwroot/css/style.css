@@ -1463,5 +1463,40 @@ body {
   padding: 8px 12px;
 }
 
+/* Botón de Diagnóstico en el Dock inferior */
+.control-btn.btn-stats-active {
+  background-color: rgba(88, 101, 242, 0.2);
+  border: 1px solid rgba(88, 101, 242, 0.4);
+  color: #fff;
+}
+
+.control-btn.btn-stats-active:hover {
+  background-color: var(--blurple);
+  border-color: var(--blurple);
+}
+
+/* Insignias de métricas y botón en la tarjeta de video grande */
+.card-live-metrics {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 10px;
+}
+
+.screen-action-btn.btn-card-diag {
+  background-color: rgba(88, 101, 242, 0.25);
+  border-color: rgba(88, 101, 242, 0.5);
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.screen-action-btn.btn-card-diag:hover {
+  background-color: var(--blurple);
+  border-color: var(--blurple);
+}
+
+
 
 
