@@ -51,13 +51,14 @@ Lowcord/
 
 ### Para el Anfitrión (Host):
 1. Ejecuta **`INICIAR.bat`**.
-2. Tu servidor se levantará y se registrará automáticamente tu sala (`facu`).
+2. Escribe el nombre de tu sala (letras y números, ej: `charla12`, `juegos4`) o presiona **ENTER** para usar la sugerida.
+3. El enlace con tu sala se copiará automáticamente al portapapeles.
 
 ### Para tus Amigos:
-- **Con la app nativa:** Solo abren `Lowcord-Client.exe`. ¡No necesitan escribir nada ni pegar enlaces! El cliente detecta tu sala y entra automáticamente.
-- **Desde el Navegador (PC o Celular):** Entran a tu enlace permanente único que nunca cambia:
-  👉 **`https://fakuinsa.github.io/lowcord`**
-  (Si la sala aún no abrió, la página esperará y se conectará sola en cuanto abras `INICIAR.bat`).
+- **Con la app nativa:** Abren `Lowcord-Client.exe`, escriben el nombre de la sala (ej: `charla12`) y hacen clic en **Conectar**. La app la recordará para futuras ocasiones (o pulsan `F2` para cambiarla).
+- **Desde el Navegador (PC o Celular):** Entran directo con tu enlace:
+  👉 **`https://fakuinsa.github.io/lowcord/?room=tu_sala`**
+  O entran a `https://fakuinsa.github.io/lowcord` y escriben el nombre de la sala.
 
 ---
 

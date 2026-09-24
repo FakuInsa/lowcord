@@ -37,7 +37,7 @@ public class MainForm : Form
 
     private WebView2 _webView = null!;
     private readonly string _configFile = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "server.txt");
-    private string _serverUrl = "http://localhost:8080";
+    private string _serverUrl = "";
     private System.Windows.Forms.Timer? _retryTimer;
 
     public MainForm()
@@ -71,13 +71,13 @@ public class MainForm : Form
 
         Controls.Add(_webView);
 
-        // Tecla F2 para cambiar de sala o servidor en cualquier momento
+        // Tecla F2 para cambiar de sala en cualquier momento
         KeyPreview = true;
         KeyDown += (s, e) =>
         {
             if (e.KeyCode == Keys.F2)
             {
-                PromptChangeServer("Ingresa el CÓDIGO de la sala (ej: facu) o el enlace completo:");
+                ShowConnectScreen();
             }
         };
     }
@@ -114,7 +114,18 @@ public class MainForm : Form
                     var msgString = args.TryGetWebMessageAsString();
                     if (msgString == "CHANGE_SERVER")
                     {
-                        BeginInvoke(() => PromptChangeServer("Ingresa el CÓDIGO de la sala (ej: facu) o el enlace completo:"));
+                        BeginInvoke(() => ShowConnectScreen());
+                        return;
+                    }
+                    if (!string.IsNullOrEmpty(msgString) && msgString.StartsWith("CONNECT_ROOM:"))
+                    {
+                        var target = msgString.Substring("CONNECT_ROOM:".Length).Trim();
+                        if (!string.IsNullOrWhiteSpace(target))
+                        {
+                            _serverUrl = target;
+                            try { File.WriteAllText(_configFile, _serverUrl); } catch { }
+                            BeginInvoke(async () => await NavigateToServerAsync());
+                        }
                         return;
                     }
 
@@ -213,6 +224,128 @@ public class MainForm : Form
         return null;
     }
 
+    private void ShowConnectScreen()
+    {
+        StopAutoRetry();
+
+        var currentVal = string.IsNullOrWhiteSpace(_serverUrl) || _serverUrl.Contains("localhost") ? "" : _serverUrl;
+
+        var html = $@"
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset='utf-8'>
+  <title>Unirse a Sala Lowcord</title>
+  <style>
+    * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+    body {{
+      background: linear-gradient(135deg, #111214 0%, #1e1f22 100%);
+      color: #f2f3f5;
+      font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      user-select: none;
+    }}
+    .card {{
+      background: #2b2d31;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 16px;
+      padding: 38px 34px;
+      width: 440px;
+      text-align: center;
+      box-shadow: 0 16px 40px rgba(0,0,0,0.5);
+    }}
+    .logo {{
+      width: 60px;
+      height: 60px;
+      background: linear-gradient(135deg, #5865F2 0%, #4752c4 100%);
+      border-radius: 18px;
+      margin: 0 auto 18px auto;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 6px 20px rgba(88, 101, 242, 0.35);
+    }}
+    .logo svg {{ width: 34px; height: 34px; fill: #fff; }}
+    h2 {{
+      margin-bottom: 8px;
+      font-size: 22px;
+      font-weight: 700;
+      color: #fff;
+    }}
+    p {{
+      color: #949ba4;
+      font-size: 13.5px;
+      line-height: 1.4;
+      margin-bottom: 22px;
+    }}
+    .input-box {{
+      width: 100%;
+      padding: 12px 14px;
+      background: #1e1f22;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 8px;
+      color: #fff;
+      font-size: 15px;
+      font-weight: 600;
+      text-align: center;
+      margin-bottom: 16px;
+      outline: none;
+    }}
+    .input-box:focus {{
+      border-color: #5865F2;
+    }}
+    .btn {{
+      width: 100%;
+      background: #5865F2;
+      color: #fff;
+      border: none;
+      padding: 12px;
+      border-radius: 8px;
+      font-size: 14.5px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s;
+    }}
+    .btn:hover {{
+      background: #4752c4;
+    }}
+  </style>
+</head>
+<body>
+  <div class='card'>
+    <div class='logo'>
+      <svg viewBox='0 0 24 24'><path d='M12 3a9 9 0 0 0-9 9v7a3 3 0 0 0 3 3h1a1 1 0 0 0 1-1v-6a1 1 0 0 0-1-1H5v-3a7 7 0 1 1 14 0v3h-2a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h1a3 3 0 0 0 3-3v-7a9 9 0 0 0-9-9z'/></svg>
+    </div>
+    <h2>Unirse a una Sala</h2>
+    <p>Ingresa el nombre o código de sala que te compartió tu amigo (ej: charla12):</p>
+    <form onsubmit='submitRoom(event)'>
+      <input type='text' id='roomInput' class='input-box' value='{currentVal}' placeholder='Nombre de sala (letras y números)' autocomplete='off' required autofocus>
+      <button type='submit' class='btn'>Conectar a la Sala</button>
+    </form>
+  </div>
+  <script>
+    function submitRoom(e) {{
+      e.preventDefault();
+      var val = (document.getElementById('roomInput').value || '').trim();
+      if (val) {{
+        window.chrome.webview.postMessage('CONNECT_ROOM:' + val);
+      }}
+    }}
+    setTimeout(function() {{
+      var el = document.getElementById('roomInput');
+      if (el) {{ el.focus(); el.select(); }}
+    }}, 100);
+  </script>
+</body>
+</html>";
+
+        _webView.NavigateToString(html);
+    }
+
     private async Task NavigateToServerAsync()
     {
         // 1. Si el servidor local está activo en esta máquina, es el anfitrión
@@ -223,10 +356,23 @@ public class MainForm : Form
             return;
         }
 
-        // 2. Si no es el anfitrión y el archivo venía con localhost o vacío, usar el código por defecto "facu"
-        if (_serverUrl.Contains("localhost") || string.IsNullOrWhiteSpace(_serverUrl))
+        // 2. Si no es el anfitrión y no hay sala especificada o es localhost
+        if (string.IsNullOrWhiteSpace(_serverUrl) || _serverUrl.Contains("localhost"))
         {
-            _serverUrl = "facu";
+            if (File.Exists(_configFile))
+            {
+                var saved = (await File.ReadAllTextAsync(_configFile)).Trim();
+                if (!string.IsNullOrEmpty(saved) && !saved.Contains("localhost"))
+                {
+                    _serverUrl = saved;
+                }
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(_serverUrl) || _serverUrl.Contains("localhost"))
+        {
+            ShowConnectScreen();
+            return;
         }
 
         var resolved = await ResolveInputToUrlAsync(_serverUrl);
@@ -243,7 +389,7 @@ public class MainForm : Form
 
     private void ShowWaitingScreen(string roomCode)
     {
-        var displayCode = string.IsNullOrWhiteSpace(roomCode) ? "facu" : roomCode;
+        var displayCode = string.IsNullOrWhiteSpace(roomCode) ? "-" : roomCode;
         if (displayCode.StartsWith("http://") || displayCode.StartsWith("https://"))
         {
             displayCode = "Enlace Web";

@@ -5,6 +5,11 @@ echo ===================================================
 echo             COMPILANDO LOWCORD (.NET 9)
 echo ===================================================
 echo.
+REM Cerrar procesos previos para evitar bloqueos de archivos en disco
+taskkill /F /IM Lowcord.Server.exe >nul 2>&1
+taskkill /F /IM Lowcord-Client.exe >nul 2>&1
+taskkill /F /IM Lowcord.Client.exe >nul 2>&1
+
 echo [1/2] Compilando Servidor WebRTC y Signaling...
 dotnet publish src\Lowcord.Server\Lowcord.Server.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o EJECUTABLES_LISTOS\Servidor
 if errorlevel 1 (

@@ -8,22 +8,45 @@ $serverExe = Join-Path $PSScriptRoot "Servidor\Lowcord.Server.exe"
 $clientExe = Join-Path $PSScriptRoot "Lowcord-Client.exe"
 $cloudflaredExe = Join-Path $PSScriptRoot "cloudflared.exe"
 $logFile = Join-Path $PSScriptRoot "cloudflared.log"
+$codeFile = Join-Path $PSScriptRoot "room_code.txt"
 
 Clear-Host
 Write-Host "==========================================================================" -ForegroundColor Cyan
 Write-Host "                 LOWCORD - SERVIDOR DE LLAMADAS P2P                       " -ForegroundColor Cyan
 Write-Host "==========================================================================" -ForegroundColor Cyan
 
-# 1. Detener procesos previos para no duplicar puertos
+# 1. Configurar o confirmar nombre de sala (letras y numeros)
+$previousRoom = $null
+if (Test-Path $codeFile) {
+    $previousRoom = (Get-Content $codeFile -Raw -ErrorAction SilentlyContinue).Trim().ToLower()
+}
+$suggested = if ($previousRoom) { $previousRoom } else { "sala" + (Get-Random -Minimum 10 -Maximum 99) }
+
+Write-Host ""
+Write-Host "  CONFIGURACION DE TU SALA:" -ForegroundColor Yellow
+Write-Host "  Elige el nombre de tu sala (letras y numeros, ej: charla12, squad5)." -ForegroundColor White
+Write-Host "  Presiona [ENTER] para usar: " -NoNewline -ForegroundColor Gray
+Write-Host "[$suggested]" -ForegroundColor Green -NoNewline
+Write-Host " o escribe uno nuevo:" -ForegroundColor Gray
+
+$inputRoom = Read-Host "  > Nombre de sala"
+$inputRoom = ($inputRoom -replace '[^a-zA-Z0-9_-]', '').Trim().ToLower()
+
+$roomCode = if ($inputRoom) { $inputRoom } else { $suggested }
+Set-Content -Path $codeFile -Value $roomCode -Encoding UTF8
+
+Write-Host "  -> Sala activa fijada en: $roomCode" -ForegroundColor Cyan
+Write-Host ""
+
+# 2. Detener procesos previos para no duplicar puertos
 Get-Process -Name "Lowcord.Server", "cloudflared" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 if (Test-Path $logFile) { Remove-Item $logFile -Force -ErrorAction SilentlyContinue }
 
-# 2. Iniciar Servidor (Visible / administrado por esta consola)
-Write-Host ""
+# 3. Iniciar Servidor (Visible / administrado por esta consola)
 Write-Host " [1/3] Iniciando Servidor WebRTC en http://localhost:8080..." -ForegroundColor Yellow
 $procServer = Start-Process -FilePath $serverExe -WorkingDirectory (Split-Path -Parent $serverExe) -PassThru
 
-# 3. Iniciar Cloudflare Tunnel
+# 4. Iniciar Cloudflare Tunnel
 Write-Host " [2/3] Conectando Tunel Seguro Cloudflare (HTTPS)..." -ForegroundColor Yellow
 if (-not (Test-Path $cloudflaredExe)) {
     Write-Host "       Descargando ejecutable oficial de Cloudflare Tunnel..." -ForegroundColor Gray
@@ -35,7 +58,7 @@ if (-not (Test-Path $cloudflaredExe)) {
 }
 $procCf = Start-Process -FilePath $cloudflaredExe -ArgumentList "tunnel --url http://localhost:8080 --logfile `"$logFile`"" -PassThru -WindowStyle Minimized
 
-# 4. Esperar enlace de Cloudflare
+# 5. Esperar enlace de Cloudflare
 $tunnelUrl = $null
 $attempts = 0
 while ($attempts -lt 25 -and -not $tunnelUrl) {
@@ -49,29 +72,17 @@ while ($attempts -lt 25 -and -not $tunnelUrl) {
     $attempts++
 }
 
-# 4.5. Resolver codigo de sala (lee room_code.txt si existe, o genera uno unico)
-$codeFile = Join-Path $PSScriptRoot "room_code.txt"
-$roomCode = $null
-if (Test-Path $codeFile) {
-    $custom = (Get-Content $codeFile -Raw -ErrorAction SilentlyContinue).Trim().ToLower()
-    if ($custom) { $roomCode = $custom }
-}
-if (-not $roomCode) {
-    $defaultRoom = ($env:USERNAME -replace '[^a-zA-Z0-9]', '').ToLower()
-    if (-not $defaultRoom) { $defaultRoom = "sala-" + (Get-Random -Minimum 1000 -Maximum 9999) }
-    $roomCode = $defaultRoom
-    Set-Content -Path $codeFile -Value $roomCode -Encoding UTF8
-}
-
+# 6. Publicar sala en resolvedor P2P
 if ($tunnelUrl) {
     try {
         $encodedUrl = [System.Uri]::EscapeDataString($tunnelUrl)
         Invoke-RestMethod -Uri "https://api.keyval.org/set/lowcord_$roomCode/$encodedUrl" -TimeoutSec 5 -ErrorAction SilentlyContinue | Out-Null
     } catch {}
-    Set-Clipboard -Value "https://fakuinsa.github.io/lowcord"
+    $shareUrl = "https://fakuinsa.github.io/lowcord/?room=$roomCode"
+    Set-Clipboard -Value $shareUrl
 }
 
-# 5. Iniciar cliente nativo si no esta en modo dedicado (-NoClient)
+# 7. Iniciar cliente nativo si no esta en modo dedicado (-NoClient)
 if (-not $NoClient) {
     Write-Host " [3/3] Abriendo aplicacion Lowcord..." -ForegroundColor Yellow
     Start-Process -FilePath $clientExe -WorkingDirectory $PSScriptRoot
@@ -87,11 +98,11 @@ Write-Host ""
 if ($tunnelUrl) {
     Write-Host "  CODIGO DE TU SALA: " -NoNewline -ForegroundColor Green
     Write-Host "  $roomCode  " -ForegroundColor Black -BackgroundColor Yellow
-    Write-Host "  (Tus amigos con Lowcord-Client.exe entran automaticamente sin link!)" -ForegroundColor Gray
+    Write-Host "  (Tus amigos abren Lowcord y solo escriben este codigo para entrar!)" -ForegroundColor Gray
     Write-Host ""
-    Write-Host "  ENLACE WEB FIJO (Navegador PC o Celular - NUNCA CAMBIA):" -ForegroundColor Cyan
-    Write-Host "  https://fakuinsa.github.io/lowcord" -ForegroundColor Yellow
-    Write-Host "  (Ya copiado a tu portapapeles - Compartelo 1 sola vez)" -ForegroundColor DarkGray
+    Write-Host "  ENLACE WEB (Navegador PC o Celular):" -ForegroundColor Cyan
+    Write-Host "  https://fakuinsa.github.io/lowcord/?room=$roomCode" -ForegroundColor Yellow
+    Write-Host "  (Ya copiado a tu portapapeles - Compartelo con tus amigos)" -ForegroundColor DarkGray
     Write-Host ""
     Write-Host "  ENLACE DIRECTO DE SESION:" -ForegroundColor DarkGray
     Write-Host "  $tunnelUrl" -ForegroundColor DarkGray

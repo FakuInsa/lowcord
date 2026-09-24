@@ -184,26 +184,20 @@
       text-decoration: underline;
     }
 
-    .custom-room-form {
-      display: none;
-      margin-top: 16px;
-      padding-top: 16px;
-      border-top: 1px solid rgba(255, 255, 255, 0.08);
-    }
-
-    .custom-room-form input {
+    .text-input {
       width: 100%;
-      padding: 10px 14px;
+      padding: 12px 14px;
       background: #1e1f22;
       border: 1px solid rgba(255, 255, 255, 0.15);
-      border-radius: 8px;
+      border-radius: 10px;
       color: white;
-      font-size: 14px;
-      margin-bottom: 10px;
+      font-size: 15px;
+      margin-bottom: 14px;
       outline: none;
+      text-align: center;
     }
 
-    .custom-room-form input:focus {
+    .text-input:focus {
       border-color: #5865F2;
     }
 
@@ -211,6 +205,14 @@
       font-size: 12px;
       color: #80848e;
       margin-top: 8px;
+    }
+
+    .view-section {
+      display: none;
+    }
+
+    .view-section.active {
+      display: block;
     }
   </style>
 </head>
@@ -225,46 +227,94 @@
     </div>
 
     <h1>Lowcord Web</h1>
-    <div class="room-pill">Sala: <span id="roomNameDisplay">facu</span></div>
 
-    <div class="status-box" id="statusBox">
-      <div class="status-title">
-        <div class="dot" id="statusDot"></div>
-        <span id="statusTitle">Buscando sala...</span>
-      </div>
-      <div class="status-desc" id="statusDesc">
-        Conectando al registro P2P para encontrar la sala de tu amigo...
-      </div>
+    <!-- VISTA 1: Ingreso de sala si no hay ninguna especificada -->
+    <div class="view-section" id="viewInput">
+      <p style="color: #949ba4; font-size: 14px; margin-bottom: 18px;">
+        Ingresa el nombre o código de la sala para unirte (ej: charla12, squad5):
+      </p>
+      <form onsubmit="handleInputSubmit(event)">
+        <input type="text" id="manualRoomInput" class="text-input" placeholder="Nombre de sala (letras y números)" autocomplete="off" required>
+        <button type="submit" class="btn">Unirse a la Sala</button>
+      </form>
     </div>
 
-    <button class="btn" id="actionBtn" onclick="checkRoom(true)">
-      <span id="btnText">Reintentar Ahora</span>
-    </button>
+    <!-- VISTA 2: Busqueda / Espera de sala -->
+    <div class="view-section" id="viewWaiting">
+      <div class="room-pill">Sala: <span id="roomNameDisplay">-</span></div>
 
-    <div class="timer-text" id="timerText">Reintentando automaticamente en 3s...</div>
+      <div class="status-box" id="statusBox">
+        <div class="status-title">
+          <div class="dot" id="statusDot"></div>
+          <span id="statusTitle">Buscando sala...</span>
+        </div>
+        <div class="status-desc" id="statusDesc">
+          Conectando al registro P2P para encontrar la sala de tu amigo...
+        </div>
+      </div>
 
-    <div>
-      <a class="secondary-link" onclick="toggleCustomRoom()">Cambiar sala / codigo</a>
-    </div>
+      <button class="btn" id="actionBtn" onclick="checkRoom(true)">
+        <span id="btnText">Reintentar Ahora</span>
+      </button>
 
-    <div class="custom-room-form" id="customRoomForm">
-      <input type="text" id="customRoomInput" placeholder="Nombre de la sala (ej: facu)">
-      <button class="btn" onclick="saveCustomRoom()">Entrar a esta sala</button>
+      <div class="timer-text" id="timerText">Reintentando automáticamente en 3s...</div>
+
+      <div>
+        <a class="secondary-link" onclick="switchViewToInput()">Cambiar de sala</a>
+      </div>
     </div>
   </div>
 
   <script>
     const urlParams = new URLSearchParams(window.location.search);
-    let currentRoom = (urlParams.get('room') || 'facu').trim().toLowerCase();
-
-    document.getElementById('roomNameDisplay').textContent = currentRoom;
+    let currentRoom = (urlParams.get('room') || localStorage.getItem('lowcord_room') || '').trim().toLowerCase();
 
     let countdown = 3;
     let timerId = null;
     let isChecking = false;
 
+    function init() {
+      if (currentRoom) {
+        startWaitingForRoom(currentRoom);
+      } else {
+        switchViewToInput();
+      }
+    }
+
+    function switchViewToInput() {
+      if (timerId) clearInterval(timerId);
+      document.getElementById('viewWaiting').classList.remove('active');
+      document.getElementById('viewInput').classList.add('active');
+      const input = document.getElementById('manualRoomInput');
+      input.value = currentRoom;
+      setTimeout(() => input.focus(), 100);
+    }
+
+    function handleInputSubmit(e) {
+      e.preventDefault();
+      const val = (document.getElementById('manualRoomInput').value || '').replace(/[^a-zA-Z0-9_-]/g, '').trim().toLowerCase();
+      if (!val) return;
+
+      currentRoom = val;
+      localStorage.setItem('lowcord_room', currentRoom);
+
+      // Actualizar URL sin recargar para facilitar compartir
+      const url = new URL(window.location.href);
+      url.searchParams.set('room', currentRoom);
+      window.history.replaceState({}, '', url.toString());
+
+      startWaitingForRoom(currentRoom);
+    }
+
+    function startWaitingForRoom(room) {
+      document.getElementById('roomNameDisplay').textContent = room;
+      document.getElementById('viewInput').classList.remove('active');
+      document.getElementById('viewWaiting').classList.add('active');
+      checkRoom(false);
+    }
+
     async function checkRoom(isManual = false) {
-      if (isChecking) return;
+      if (isChecking || !currentRoom) return;
       isChecking = true;
 
       const statusBox = document.getElementById('statusBox');
@@ -279,7 +329,6 @@
       }
 
       try {
-        // Consultar con timestamp para evitar cache en navegadores moviles
         const res = await fetch(`https://api.keyval.org/get/lowcord_${encodeURIComponent(currentRoom)}?_t=${Date.now()}`);
         if (!res.ok) throw new Error("Error de red");
 
@@ -288,7 +337,6 @@
         if (data && data.status === 'SUCCESS' && data.val) {
           const val = data.val.trim();
           if ((val.startsWith('http://') || val.startsWith('https://')) && val.toLowerCase() !== 'offline') {
-            // ¡SALA ENCONTRADA!
             statusBox.className = "status-box online";
             statusDot.className = "dot online";
             statusTitle.textContent = "¡Sala Encontrada!";
@@ -301,15 +349,13 @@
 
             if (timerId) clearInterval(timerId);
 
-            // Redirección directa e instantánea
             setTimeout(() => {
               window.location.replace(val);
-            }, 600);
+            }, 500);
             return;
           }
         }
 
-        // Si la sala está offline
         statusBox.className = "status-box offline";
         statusDot.className = "dot offline";
         statusTitle.textContent = "Sala fuera de línea";
@@ -320,7 +366,7 @@
         statusBox.className = "status-box offline";
         statusDot.className = "dot offline";
         statusTitle.textContent = "Esperando al anfitrión...";
-        statusDesc.textContent = "Apenas tu amigo inicie Lowcord en su PC, esta página entrará automáticamente.";
+        statusDesc.textContent = `Apenas tu amigo inicie Lowcord en su PC con la sala "${currentRoom}", entrarás automáticamente.`;
       } finally {
         isChecking = false;
         resetCountdown();
@@ -348,27 +394,7 @@
       }
     }
 
-    function toggleCustomRoom() {
-      const form = document.getElementById('customRoomForm');
-      form.style.display = form.style.display === 'block' ? 'none' : 'block';
-      if (form.style.display === 'block') {
-        document.getElementById('customRoomInput').value = currentRoom;
-        document.getElementById('customRoomInput').focus();
-      }
-    }
-
-    function saveCustomRoom() {
-      const input = document.getElementById('customRoomInput');
-      const val = input.value.trim().toLowerCase();
-      if (val) {
-        const url = new URL(window.location.href);
-        url.searchParams.set('room', val);
-        window.location.href = url.toString();
-      }
-    }
-
-    // Iniciar chequeo de inmediato al cargar la página
-    checkRoom();
+    init();
   </script>
 </body>
 </html>
