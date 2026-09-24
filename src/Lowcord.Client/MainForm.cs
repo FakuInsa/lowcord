@@ -38,6 +38,7 @@ public class MainForm : Form
     private WebView2 _webView = null!;
     private readonly string _configFile = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "server.txt");
     private string _serverUrl = "http://localhost:8080";
+    private System.Windows.Forms.Timer? _retryTimer;
 
     public MainForm()
     {
@@ -105,11 +106,18 @@ public class MainForm : Form
             _webView.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
             _webView.CoreWebView2.Settings.IsStatusBarEnabled = false;
 
-            // Escuchar mensajes del cliente web (ej: actualización de atajo de teclado)
+            // Escuchar mensajes del cliente web (ej: atajos o botón Cambiar Sala)
             _webView.CoreWebView2.WebMessageReceived += (sender, args) =>
             {
                 try
                 {
+                    var msgString = args.TryGetWebMessageAsString();
+                    if (msgString == "CHANGE_SERVER")
+                    {
+                        BeginInvoke(() => PromptChangeServer("Ingresa el CÓDIGO de la sala (ej: facu) o el enlace completo:"));
+                        return;
+                    }
+
                     var rawJson = args.WebMessageAsJson;
                     using var doc = JsonDocument.Parse(rawJson);
                     var root = doc.RootElement;
@@ -125,13 +133,12 @@ public class MainForm : Form
                 catch { }
             };
 
-            // Si falla la conexión (por ejemplo, en la PC de un amigo donde localhost no existe),
-            // solicitar automáticamente la URL del servidor sin mostrar pantalla de error
+            // Si falla la navegación (ej: servidor caído o túnel cerrado), mostrar pantalla de espera con reintento automático
             _webView.NavigationCompleted += (sender, args) =>
             {
                 if (!args.IsSuccess && args.WebErrorStatus != CoreWebView2WebErrorStatus.OperationCanceled)
                 {
-                    PromptChangeServer("No se pudo conectar a la sala actual.\nIngresa el CÓDIGO de sala (ej: facu) o el enlace de tu amigo:");
+                    ShowWaitingScreen(_serverUrl);
                 }
             };
 
@@ -148,6 +155,20 @@ public class MainForm : Form
         }
     }
 
+    private async Task<bool> IsLocalServerRunningAsync()
+    {
+        try
+        {
+            using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(400));
+            var resp = await _httpClient.GetAsync("http://localhost:8080", cts.Token);
+            return resp.IsSuccessStatusCode;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     private async Task<string?> ResolveInputToUrlAsync(string input)
     {
         input = input.Trim();
@@ -160,10 +181,8 @@ public class MainForm : Form
             return input;
         }
 
-        // Si es localhost o IP directa
-        if (input.StartsWith("localhost", StringComparison.OrdinalIgnoreCase) ||
-            input.StartsWith("127.0.0.1") ||
-            (input.Contains(':') && !input.Contains(' ')))
+        // Si es IP directa
+        if (input.StartsWith("127.0.0.1") || (input.Contains(':') && !input.Contains(' ')))
         {
             return "http://" + input;
         }
@@ -172,12 +191,15 @@ public class MainForm : Form
         var code = input.ToLowerInvariant();
         try
         {
-            var res = await _httpClient.GetStringAsync($"https://api.keyval.org/get/lowcord_{code}");
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+            var res = await _httpClient.GetStringAsync($"https://api.keyval.org/get/lowcord_{code}", cts.Token);
             using var doc = JsonDocument.Parse(res);
             if (doc.RootElement.TryGetProperty("val", out var valProp))
             {
                 var val = valProp.GetString();
-                if (!string.IsNullOrWhiteSpace(val) && (val.StartsWith("http://") || val.StartsWith("https://")))
+                if (!string.IsNullOrWhiteSpace(val) &&
+                    (val.StartsWith("http://") || val.StartsWith("https://")) &&
+                    !val.Equals("offline", StringComparison.OrdinalIgnoreCase))
                 {
                     return val;
                 }
@@ -193,14 +215,197 @@ public class MainForm : Form
 
     private async Task NavigateToServerAsync()
     {
+        // 1. Si el servidor local está activo en esta máquina, es el anfitrión
+        if (await IsLocalServerRunningAsync())
+        {
+            StopAutoRetry();
+            _webView.Source = new Uri("http://localhost:8080");
+            return;
+        }
+
+        // 2. Si no es el anfitrión y el archivo venía con localhost o vacío, usar el código por defecto "facu"
+        if (_serverUrl.Contains("localhost") || string.IsNullOrWhiteSpace(_serverUrl))
+        {
+            _serverUrl = "facu";
+        }
+
         var resolved = await ResolveInputToUrlAsync(_serverUrl);
         if (!string.IsNullOrEmpty(resolved) && Uri.TryCreate(resolved, UriKind.Absolute, out var uri))
         {
+            StopAutoRetry();
             _webView.Source = uri;
         }
         else
         {
-            PromptChangeServer("Ingresa el CÓDIGO de la sala (ej: facu) o el enlace completo:");
+            ShowWaitingScreen(_serverUrl);
+        }
+    }
+
+    private void ShowWaitingScreen(string roomCode)
+    {
+        var displayCode = string.IsNullOrWhiteSpace(roomCode) ? "facu" : roomCode;
+        if (displayCode.StartsWith("http://") || displayCode.StartsWith("https://"))
+        {
+            displayCode = "Enlace Web";
+        }
+
+        var html = $@"
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset='utf-8'>
+  <title>Buscando sala...</title>
+  <style>
+    * {{ box-sizing: border-box; }}
+    body {{
+      background-color: #1e1f22;
+      color: #f2f3f5;
+      font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      margin: 0;
+      user-select: none;
+    }}
+    .card {{
+      background: #2b2d31;
+      border: 1px solid #3f4147;
+      border-radius: 14px;
+      padding: 38px 34px;
+      width: 440px;
+      text-align: center;
+      box-shadow: 0 12px 32px rgba(0,0,0,0.5);
+    }}
+    .spinner {{
+      width: 46px;
+      height: 46px;
+      border: 4px solid rgba(88, 101, 242, 0.2);
+      border-top-color: #5865f2;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin: 0 auto 22px auto;
+    }}
+    @keyframes spin {{ to {{ transform: rotate(360deg); }} }}
+    h2 {{
+      margin: 0 0 10px 0;
+      font-size: 21px;
+      font-weight: 700;
+      color: #fff;
+    }}
+    .room-pill {{
+      display: inline-block;
+      background: rgba(88, 101, 242, 0.15);
+      border: 1px solid rgba(88, 101, 242, 0.4);
+      color: #5865f2;
+      font-weight: 700;
+      font-size: 15px;
+      padding: 6px 18px;
+      border-radius: 20px;
+      margin-bottom: 16px;
+    }}
+    p {{
+      color: #949ba4;
+      font-size: 13.5px;
+      line-height: 1.5;
+      margin: 0 0 24px 0;
+    }}
+    .actions {{
+      display: flex;
+      gap: 10px;
+      justify-content: center;
+    }}
+    button {{
+      background: #35373c;
+      border: 1px solid #4e5058;
+      color: #dbdee1;
+      padding: 9px 18px;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }}
+    button:hover {{
+      background: #5865f2;
+      border-color: #5865f2;
+      color: #fff;
+    }}
+    .status-live {{
+      font-size: 12px;
+      color: #23a55a;
+      margin-top: 18px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+    }}
+    .dot {{
+      width: 8px;
+      height: 8px;
+      background-color: #23a55a;
+      border-radius: 50%;
+      animation: pulse 1.5s infinite;
+    }}
+    @keyframes pulse {{
+      0% {{ opacity: 0.3; }}
+      50% {{ opacity: 1; }}
+      100% {{ opacity: 0.3; }}
+    }}
+  </style>
+</head>
+<body>
+  <div class='card'>
+    <div class='spinner'></div>
+    <h2>Buscando sala...</h2>
+    <div class='room-pill'>Sala: {displayCode}</div>
+    <p>Esperando a que tu amigo inicie Lowcord en su PC.<br>Te conectarás automáticamente apenas la sala esté activa.</p>
+    <div class='actions'>
+      <button onclick='window.chrome.webview.postMessage(""CHANGE_SERVER"")'>Cambiar Sala (F2)</button>
+    </div>
+    <div class='status-live'>
+      <div class='dot'></div>
+      <span>Reintentando automáticamente cada 3 segundos</span>
+    </div>
+  </div>
+</body>
+</html>";
+
+        _webView.NavigateToString(html);
+        StartAutoRetry();
+    }
+
+    private void StartAutoRetry()
+    {
+        StopAutoRetry();
+        _retryTimer = new System.Windows.Forms.Timer { Interval = 3000 };
+        _retryTimer.Tick += async (s, e) =>
+        {
+            if (await IsLocalServerRunningAsync())
+            {
+                StopAutoRetry();
+                _webView.Source = new Uri("http://localhost:8080");
+                return;
+            }
+
+            var resolved = await ResolveInputToUrlAsync(_serverUrl);
+            if (!string.IsNullOrEmpty(resolved) && Uri.TryCreate(resolved, UriKind.Absolute, out var uri))
+            {
+                StopAutoRetry();
+                _webView.Source = uri;
+            }
+        };
+        _retryTimer.Start();
+    }
+
+    private void StopAutoRetry()
+    {
+        if (_retryTimer != null)
+        {
+            _retryTimer.Stop();
+            _retryTimer.Dispose();
+            _retryTimer = null;
         }
     }
 
@@ -286,38 +491,30 @@ public class MainForm : Form
             btnOk.Enabled = false;
             btnCancel.Enabled = false;
             textBox.Enabled = false;
-            lblStatus.Text = "Buscando sala y conectando...";
+            lblStatus.Text = "Buscando sala...";
+
+            _serverUrl = rawInput;
+            try
+            {
+                File.WriteAllText(_configFile, _serverUrl);
+            }
+            catch { }
+
+            prompt.DialogResult = DialogResult.OK;
+            prompt.Close();
 
             var resolvedUrl = await ResolveInputToUrlAsync(rawInput);
             if (!string.IsNullOrEmpty(resolvedUrl) && Uri.TryCreate(resolvedUrl, UriKind.Absolute, out var uri))
             {
-                _serverUrl = rawInput;
-                try
-                {
-                    File.WriteAllText(_configFile, _serverUrl);
-                }
-                catch { }
-
+                StopAutoRetry();
                 if (_webView.CoreWebView2 != null)
                 {
                     _webView.Source = uri;
                 }
-                prompt.DialogResult = DialogResult.OK;
-                prompt.Close();
             }
             else
             {
-                lblStatus.Text = "";
-                btnOk.Enabled = true;
-                btnCancel.Enabled = true;
-                textBox.Enabled = true;
-                MessageBox.Show(
-                    prompt,
-                    $"No se encontró ninguna sala activa para '{rawInput}'.\n\nSi es un código (ej: facu), asegúrate de que tu amigo haya abierto el servidor (iniciar_host.ps1) en su PC.\nO escribe el enlace web completo.",
-                    "Sala no encontrada",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Warning
-                );
+                ShowWaitingScreen(_serverUrl);
             }
         };
 

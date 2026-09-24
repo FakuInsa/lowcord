@@ -112,6 +112,9 @@ try {
 }
 finally {
     Write-Host "Cerrando procesos locales..." -ForegroundColor Gray
+    try {
+        Invoke-RestMethod -Uri "https://api.keyval.org/set/lowcord_$roomCode/offline" -TimeoutSec 2 -ErrorAction SilentlyContinue | Out-Null
+    } catch {}
     if ($procServer -and -not $procServer.HasExited) { Stop-Process -Id $procServer.Id -Force -ErrorAction SilentlyContinue }
     if ($procCf -and -not $procCf.HasExited) { Stop-Process -Id $procCf.Id -Force -ErrorAction SilentlyContinue }
 }
