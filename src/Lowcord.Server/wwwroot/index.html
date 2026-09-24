@@ -68,9 +68,9 @@
     <div class="modal-card settings-card">
       <div class="modal-header">
         <div class="app-logo">
-          <h2>Configuración de Audio</h2>
+          <h2>Configuración y Rendimiento</h2>
         </div>
-        <p class="subtitle">Selecciona tus dispositivos y ajusta el volumen</p>
+        <p class="subtitle">Dispositivos, opciones de voz y aceleración de video</p>
       </div>
 
       <div class="settings-body">
@@ -168,6 +168,18 @@
             <span class="settings-hint" style="margin-top:2px;">Tono suave al mutear o desmutear el micrófono (estilo Discord).</span>
           </div>
         </div>
+
+        <!-- ACELERACIÓN POR HARDWARE (GPU / H.264) -->
+        <div class="toggle-group" style="margin-top: 10px;">
+          <label class="toggle-container">
+            <input type="checkbox" id="chk-hardware-accel" checked>
+            <span class="toggle-slider"></span>
+          </label>
+          <div>
+            <span class="toggle-label" style="display:block; font-weight:600;">Aceleración por Hardware (GPU / H.264)</span>
+            <span class="settings-hint" style="margin-top:2px;">Usa el chip de video dedicado (Nvidia NVENC/NVDEC, AMD AMF o Intel QuickSync) para decodificar y transmitir pantallas con consumo mínimo de CPU.</span>
+          </div>
+        </div>
       </div>
 
       <div class="modal-footer">
@@ -229,6 +241,18 @@
           <div>
             <span class="toggle-label" style="display:block; font-weight:600;">Ver mi propia pantalla en miniatura</span>
             <span class="settings-hint" style="margin-top:2px;">Desactivado ahorra 10-15% de GPU adicional mientras juegas.</span>
+          </div>
+        </div>
+
+        <!-- TOGGLE DE ACELERACIÓN POR HARDWARE -->
+        <div class="toggle-group" style="margin-top: 14px;">
+          <label class="toggle-container">
+            <input type="checkbox" id="chk-quality-hardware-accel" checked>
+            <span class="toggle-slider"></span>
+          </label>
+          <div>
+            <span class="toggle-label" style="display:block; font-weight:600;">Aceleración por Hardware (H.264)</span>
+            <span class="settings-hint" style="margin-top:2px;">Transmite usando NVENC / AMF / QuickSync para no robarle FPS a tus juegos.</span>
           </div>
         </div>
       </div>

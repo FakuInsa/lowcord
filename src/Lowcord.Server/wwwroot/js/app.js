@@ -66,6 +66,7 @@ let screenQuality = {
   fps: parseInt(localStorage.getItem('lowcord_screen_fps') || '60', 10),
   localPreview: localStorage.getItem('lowcord_screen_preview') === 'true' // false por defecto para máximo ahorro de GPU
 };
+let hardwareAccelerationEnabled = localStorage.getItem('lowcord_hardware_accel') !== 'false'; // Aceleración por Hardware (H.264 / GPU)
 
 let isPttActive = false;
 let isGateOpen = true;
@@ -156,6 +157,8 @@ const btnConfirmScreen = document.getElementById('btn-confirm-screen');
 // Toggle de sonido de silenciado / activación (estilo Discord)
 let muteSoundsEnabled = localStorage.getItem('lowcord_mute_sounds') !== 'false';
 const chkMuteSound = document.getElementById('chk-mute-sound');
+const chkHardwareAccel = document.getElementById('chk-hardware-accel');
+const chkQualityHardwareAccel = document.getElementById('chk-quality-hardware-accel');
 
 // Miniatura flotante de vista previa (PiP local)
 const streamMiniPreview = document.getElementById('stream-mini-preview');
@@ -653,8 +656,10 @@ async function initSignalR() {
       await peer.pc.addIceCandidate(peer.queue.shift());
     }
 
+    applyHardwareAccelerationCodecPreferences(peer.pc);
     const answer = await peer.pc.createAnswer();
-    await peer.pc.setLocalDescription(answer);
+    const finalAnswer = hardwareAccelerationEnabled ? { type: answer.type, sdp: prioritizeH264InSdp(answer.sdp) } : answer;
+    await peer.pc.setLocalDescription(finalAnswer);
     await connection.invoke('SendAnswer', senderId, JSON.stringify(peer.pc.localDescription));
   });
 
@@ -760,6 +765,71 @@ async function initSignalR() {
 }
 
 // =========================================================
+// ACELERACIÓN POR HARDWARE (CÓDEC H.264 / GPU)
+// =========================================================
+function prioritizeH264InSdp(sdp) {
+  if (!sdp || typeof sdp !== 'string') return sdp;
+  try {
+    const lines = sdp.split(/\r\n|\n/);
+    const h264Payloads = new Set();
+    for (const line of lines) {
+      const match = line.match(/^a=rtpmap:(\d+)\s+H264\/90000/i);
+      if (match) {
+        h264Payloads.add(match[1]);
+      }
+    }
+
+    if (h264Payloads.size === 0) return sdp;
+
+    const modifiedLines = lines.map(line => {
+      if (line.startsWith('m=video ')) {
+        const parts = line.split(' ');
+        if (parts.length > 3) {
+          const prefix = parts.slice(0, 3);
+          const payloads = parts.slice(3);
+          const h264List = payloads.filter(pt => h264Payloads.has(pt));
+          const otherList = payloads.filter(pt => !h264Payloads.has(pt));
+          return [...prefix, ...h264List, ...otherList].join(' ');
+        }
+      }
+      return line;
+    });
+
+    return modifiedLines.join('\r\n');
+  } catch (err) {
+    console.warn('[WebRTC] Error al reordenar códec H.264 en SDP:', err);
+    return sdp;
+  }
+}
+
+function applyHardwareAccelerationCodecPreferences(pc) {
+  if (!pc || !hardwareAccelerationEnabled) return;
+  try {
+    if (typeof RTCRtpReceiver !== 'undefined' && RTCRtpReceiver.getCapabilities) {
+      const caps = RTCRtpReceiver.getCapabilities('video');
+      if (caps && caps.codecs && caps.codecs.length > 0) {
+        const h264 = caps.codecs.filter(c => c.mimeType && c.mimeType.toLowerCase() === 'video/h264');
+        const others = caps.codecs.filter(c => !c.mimeType || c.mimeType.toLowerCase() !== 'video/h264');
+        if (h264.length > 0) {
+          const sortedCodecs = [...h264, ...others];
+          const transceivers = pc.getTransceivers ? pc.getTransceivers() : [];
+          transceivers.forEach(transceiver => {
+            const kind = transceiver.receiver?.track?.kind || transceiver.sender?.track?.kind;
+            if (kind === 'video' || (!kind && transceiver.mid === null)) {
+              try {
+                transceiver.setCodecPreferences(sortedCodecs);
+              } catch (e) {}
+            }
+          });
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('[WebRTC] Error al asignar preferencias de códec H.264:', err);
+  }
+}
+
+// =========================================================
 // 4. GESTIÓN DE PEER CONNECTIONS (WEBRTC MESH)
 // =========================================================
 async function createPeerConnection(peerId, peerUserName, isInitiator) {
@@ -807,6 +877,7 @@ async function createPeerConnection(peerId, peerUserName, isInitiator) {
       const aSender = pc.addTrack(aTrack, localScreenStream);
       peerData.screenSenders.push(aSender);
     }
+    applyHardwareAccelerationCodecPreferences(pc);
   }
 
   // SOLUCIÓN LATE-JOINER: Cuando la conexión base se vuelve estable y conectada, si compartimos pantalla
@@ -837,8 +908,10 @@ async function createPeerConnection(peerId, peerUserName, isInitiator) {
       console.warn(`[WebRTC] Conexión fallida con ${peerUserName} (ICE: ${iceState}, Conn: ${connState}). Reiniciando ICE...`);
       if (pc.signalingState === 'stable') {
         try {
+          applyHardwareAccelerationCodecPreferences(pc);
           const offer = await pc.createOffer({ iceRestart: true });
-          await pc.setLocalDescription(offer);
+          const finalOffer = hardwareAccelerationEnabled ? { type: offer.type, sdp: prioritizeH264InSdp(offer.sdp) } : offer;
+          await pc.setLocalDescription(finalOffer);
           if (connection && connection.state === signalR.HubConnectionState.Connected) {
             await connection.invoke('SendOffer', peerId, JSON.stringify(pc.localDescription));
             console.log(`[WebRTC] Oferta iceRestart enviada exitosamente a ${peerUserName}`);
@@ -855,8 +928,10 @@ async function createPeerConnection(peerId, peerUserName, isInitiator) {
           if (peers.has(peerId) && pc.iceConnectionState === 'disconnected' && pc.signalingState === 'stable') {
             console.warn(`[WebRTC] Enlace con ${peerUserName} continúa desconectado tras 3s. Forzando iceRestart...`);
             try {
+              applyHardwareAccelerationCodecPreferences(pc);
               const offer = await pc.createOffer({ iceRestart: true });
-              await pc.setLocalDescription(offer);
+              const finalOffer = hardwareAccelerationEnabled ? { type: offer.type, sdp: prioritizeH264InSdp(offer.sdp) } : offer;
+              await pc.setLocalDescription(finalOffer);
               if (connection && connection.state === signalR.HubConnectionState.Connected) {
                 await connection.invoke('SendOffer', peerId, JSON.stringify(pc.localDescription));
               }
@@ -885,6 +960,7 @@ async function createPeerConnection(peerId, peerUserName, isInitiator) {
     console.log(`[WebRTC] Pista recibida de ${peerUserName}: kind=${track.kind}, id=${track.id}`);
 
     if (track.kind === 'video') {
+      applyHardwareAccelerationCodecPreferences(pc);
       const stream = event.streams[0] || new MediaStream([track]);
       addScreenCard(peerId, peerUserName, stream);
     } else if (track.kind === 'audio') {
@@ -902,8 +978,10 @@ async function createPeerConnection(peerId, peerUserName, isInitiator) {
   };
 
   if (isInitiator) {
+    applyHardwareAccelerationCodecPreferences(pc);
     const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
+    const finalOffer = hardwareAccelerationEnabled ? { type: offer.type, sdp: prioritizeH264InSdp(offer.sdp) } : offer;
+    await pc.setLocalDescription(finalOffer);
     await connection.invoke('SendOffer', peerId, JSON.stringify(pc.localDescription));
   }
 
@@ -1144,6 +1222,13 @@ function initScreenQualityUI() {
     screenQuality.localPreview = e.target.checked;
   });
 
+  if (chkQualityHardwareAccel) {
+    chkQualityHardwareAccel.checked = hardwareAccelerationEnabled;
+    chkQualityHardwareAccel.addEventListener('change', (e) => {
+      syncHardwareAccel(e.target.checked);
+    });
+  }
+
   btnCancelScreen.addEventListener('click', () => {
     screenQualityModal.style.display = 'none';
   });
@@ -1218,6 +1303,7 @@ async function startScreenShare() {
         const aSender = peer.pc.addTrack(audioTrack, localScreenStream);
         peer.screenSenders.push(aSender);
       }
+      applyHardwareAccelerationCodecPreferences(peer.pc);
       peer.screenNegotiatedForPeer = true;
       await renegotiatePeer(peerId);
     }
@@ -1393,8 +1479,10 @@ async function renegotiatePeer(peerId) {
     return;
   }
   try {
+    applyHardwareAccelerationCodecPreferences(peer.pc);
     const offer = await peer.pc.createOffer();
-    await peer.pc.setLocalDescription(offer);
+    const finalOffer = hardwareAccelerationEnabled ? { type: offer.type, sdp: prioritizeH264InSdp(offer.sdp) } : offer;
+    await peer.pc.setLocalDescription(finalOffer);
     await connection.invoke('SendOffer', peerId, JSON.stringify(peer.pc.localDescription));
   } catch (err) {
     console.error(`Error al renegociar con ${peerId}:`, err);
@@ -2216,13 +2304,33 @@ function updateUserCount() {
   userCount.innerText = 1 + peers.size;
 }
 
-// Inicializar eventos de miniatura PiP y sonidos
+function syncHardwareAccel(enabled) {
+  hardwareAccelerationEnabled = enabled;
+  localStorage.setItem('lowcord_hardware_accel', enabled);
+  if (chkHardwareAccel) chkHardwareAccel.checked = enabled;
+  if (chkQualityHardwareAccel) chkQualityHardwareAccel.checked = enabled;
+  console.log(`[Lowcord] Aceleración por Hardware (GPU / H.264): ${enabled ? 'Activada' : 'Desactivada'}`);
+}
+
+// Inicializar eventos de miniatura PiP, sonidos y aceleración por hardware
 function initMiniPreviewAndSoundsUI() {
   if (chkMuteSound) {
     chkMuteSound.checked = muteSoundsEnabled;
     chkMuteSound.addEventListener('change', (e) => {
       muteSoundsEnabled = e.target.checked;
       localStorage.setItem('lowcord_mute_sounds', muteSoundsEnabled);
+    });
+  }
+
+  if (chkHardwareAccel) {
+    chkHardwareAccel.checked = hardwareAccelerationEnabled;
+    chkHardwareAccel.addEventListener('change', async (e) => {
+      syncHardwareAccel(e.target.checked);
+      if (isScreenSharing && localScreenStream) {
+        for (const [peerId] of peers) {
+          await renegotiatePeer(peerId);
+        }
+      }
     });
   }
 

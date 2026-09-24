@@ -89,7 +89,10 @@ public class MainForm : Form
             var options = new CoreWebView2EnvironmentOptions(
                 "--autoplay-policy=no-user-gesture-required " +
                 "--disable-features=Translate,OptimizationHints,MediaRouter " +
-                "--enable-gpu-rasterization"
+                "--enable-gpu-rasterization " +
+                "--enable-zero-copy " +
+                "--ignore-gpu-blocklist " +
+                "--enable-hardware-overlays"
             );
             var env = await CoreWebView2Environment.CreateAsync(null, null, options);
             await _webView.EnsureCoreWebView2Async(env);
