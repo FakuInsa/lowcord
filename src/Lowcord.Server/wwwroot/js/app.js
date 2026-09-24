@@ -1846,6 +1846,13 @@ window.addEventListener('keydown', (e) => {
     return;
   }
 
+  // En el cliente nativo WebView2, el hook global de C# ya despacha GLOBAL_KEYDOWN
+  // tanto cuando la app está en primer plano como en segundo plano/juegos.
+  // Evitamos procesarlo aquí para que no se dispare dos veces (doble toggle).
+  if (window.chrome && window.chrome.webview) {
+    return;
+  }
+
   const isMatchingKey = (e.code && e.code === activeKeybind.code) ||
                         (e.key && e.key.toUpperCase() === activeKeybind.label.toUpperCase());
 
@@ -1865,6 +1872,10 @@ window.addEventListener('keydown', (e) => {
 window.addEventListener('keyup', (e) => {
   const activeEl = document.activeElement;
   if (activeEl && ['INPUT', 'SELECT', 'TEXTAREA'].includes(activeEl.tagName) && activeEl.offsetParent !== null) {
+    return;
+  }
+
+  if (window.chrome && window.chrome.webview) {
     return;
   }
 
@@ -1908,9 +1919,15 @@ function syncHotkeyWithNativeClient(code) {
         type: 'UPDATE_HOTKEY',
         code: code
       });
-    } catch (e) {}
+      console.log(`[Lowcord] Hotkey sincronizado con cliente nativo: ${code}`);
+    } catch (e) {
+      console.warn('Error al sincronizar hotkey con C#:', e);
+    }
   }
 }
+
+// Sincronizar hotkey guardado con el cliente nativo C# apenas carga la página
+syncHotkeyWithNativeClient(activeKeybind.code);
 
 // Configuración avanzada de la UI
 let advancedAudioSettingsInitialized = false;

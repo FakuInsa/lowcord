@@ -114,38 +114,69 @@ public class MainForm : Form
             {
                 try
                 {
-                    var msgString = args.TryGetWebMessageAsString();
-                    if (msgString == "CHANGE_SERVER")
+                    string? msgString = null;
+                    try
                     {
-                        BeginInvoke(() => ShowConnectScreen());
-                        return;
+                        msgString = args.TryGetWebMessageAsString();
                     }
-                    if (msgString == "EXIT_APP")
+                    catch
                     {
-                        BeginInvoke(() => Application.Exit());
-                        return;
-                    }
-                    if (!string.IsNullOrEmpty(msgString) && msgString.StartsWith("CONNECT_ROOM:"))
-                    {
-                        var target = msgString.Substring("CONNECT_ROOM:".Length).Trim();
-                        if (!string.IsNullOrWhiteSpace(target))
-                        {
-                            _serverUrl = target;
-                            try { File.WriteAllText(_configFile, _serverUrl); } catch { }
-                            BeginInvoke(async () => await NavigateToServerAsync());
-                        }
-                        return;
+                        // Si el mensaje es un objeto JSON, TryGetWebMessageAsString lanza ArgumentException
                     }
 
-                    var rawJson = args.WebMessageAsJson;
-                    using var doc = JsonDocument.Parse(rawJson);
-                    var root = doc.RootElement;
-                    if (root.TryGetProperty("type", out var typeProp) && typeProp.GetString() == "UPDATE_HOTKEY")
+                    if (!string.IsNullOrEmpty(msgString))
                     {
-                        if (root.TryGetProperty("code", out var codeProp))
+                        if (msgString == "CHANGE_SERVER")
                         {
-                            var code = codeProp.GetString();
-                            UpdateGlobalHotkey(code);
+                            BeginInvoke(() => ShowConnectScreen());
+                            return;
+                        }
+                        if (msgString == "EXIT_APP")
+                        {
+                            BeginInvoke(() => Application.Exit());
+                            return;
+                        }
+                        if (msgString.StartsWith("CONNECT_ROOM:"))
+                        {
+                            var target = msgString.Substring("CONNECT_ROOM:".Length).Trim();
+                            if (!string.IsNullOrWhiteSpace(target))
+                            {
+                                _serverUrl = target;
+                                try { File.WriteAllText(_configFile, _serverUrl); } catch { }
+                                BeginInvoke(async () => await NavigateToServerAsync());
+                            }
+                            return;
+                        }
+                    }
+
+                    string? rawJson = null;
+                    if (!string.IsNullOrEmpty(msgString) && msgString.TrimStart().StartsWith("{"))
+                    {
+                        rawJson = msgString;
+                    }
+                    else
+                    {
+                        try
+                        {
+                            rawJson = args.WebMessageAsJson;
+                        }
+                        catch { }
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(rawJson))
+                    {
+                        using var doc = JsonDocument.Parse(rawJson);
+                        var root = doc.RootElement;
+                        if (root.ValueKind == JsonValueKind.Object)
+                        {
+                            if (root.TryGetProperty("type", out var typeProp) && typeProp.GetString() == "UPDATE_HOTKEY")
+                            {
+                                if (root.TryGetProperty("code", out var codeProp))
+                                {
+                                    var code = codeProp.GetString();
+                                    UpdateGlobalHotkey(code);
+                                }
+                            }
                         }
                     }
                 }
@@ -811,54 +842,64 @@ public class MainForm : Form
 
     private static uint ParseKeyCodeToVk(string? code)
     {
-        if (string.IsNullOrEmpty(code)) return 0;
+        if (string.IsNullOrWhiteSpace(code)) return 0;
+        code = code.Trim();
 
-        // Teclas de letras: KeyA .. KeyZ
-        if (code.StartsWith("Key") && code.Length == 4 && char.IsLetter(code[3]))
+        // Si es una sola letra directa: "A" .. "Z" o "a" .. "z"
+        if (code.Length == 1 && char.IsLetter(code[0]))
+        {
+            return (uint)char.ToUpperInvariant(code[0]);
+        }
+
+        // Teclas de letras estándar: KeyA .. KeyZ
+        if (code.StartsWith("Key", StringComparison.OrdinalIgnoreCase) && code.Length == 4 && char.IsLetter(code[3]))
         {
             return (uint)char.ToUpperInvariant(code[3]);
         }
 
         // Teclas numéricas: Digit0 .. Digit9
-        if (code.StartsWith("Digit") && code.Length == 6 && char.IsDigit(code[5]))
+        if (code.StartsWith("Digit", StringComparison.OrdinalIgnoreCase) && code.Length == 6 && char.IsDigit(code[5]))
         {
             return (uint)(Keys.D0 + (code[5] - '0'));
         }
 
         // Teclado numérico: Numpad0 .. Numpad9
-        if (code.StartsWith("Numpad") && code.Length == 7 && char.IsDigit(code[6]))
+        if (code.StartsWith("Numpad", StringComparison.OrdinalIgnoreCase) && code.Length == 7 && char.IsDigit(code[6]))
         {
             return (uint)(Keys.NumPad0 + (code[6] - '0'));
         }
 
         // Teclas de función: F1 .. F24
-        if (code.StartsWith("F") && int.TryParse(code.Substring(1), out int fNum) && fNum >= 1 && fNum <= 24)
+        if (code.StartsWith("F", StringComparison.OrdinalIgnoreCase) && int.TryParse(code.Substring(1), out int fNum) && fNum >= 1 && fNum <= 24)
         {
             return (uint)(Keys.F1 + (fNum - 1));
         }
 
-        return code switch
+        return code.ToLowerInvariant() switch
         {
-            "Space" => (uint)Keys.Space,
-            "CapsLock" => (uint)Keys.CapsLock,
-            "Tab" => (uint)Keys.Tab,
-            "Backquote" => 0xC0,
-            "Minus" => 0xBD,
-            "Equal" => 0xBB,
-            "BracketLeft" => 0xDB,
-            "BracketRight" => 0xDD,
-            "Backslash" => 0xDC,
-            "Semicolon" => 0xBA,
-            "Quote" => 0xDE,
-            "Comma" => 0xBC,
-            "Period" => 0xBE,
-            "Slash" => 0xBF,
-            "Insert" => (uint)Keys.Insert,
-            "Delete" => (uint)Keys.Delete,
-            "Home" => (uint)Keys.Home,
-            "End" => (uint)Keys.End,
-            "PageUp" => (uint)Keys.PageUp,
-            "PageDown" => (uint)Keys.PageDown,
+            "space" => (uint)Keys.Space,
+            "capslock" => (uint)Keys.CapsLock,
+            "tab" => (uint)Keys.Tab,
+            "backquote" => 0xC0,
+            "minus" => 0xBD,
+            "equal" => 0xBB,
+            "bracketleft" => 0xDB,
+            "bracketright" => 0xDD,
+            "backslash" => 0xDC,
+            "semicolon" => 0xBA,
+            "quote" => 0xDE,
+            "comma" => 0xBC,
+            "period" => 0xBE,
+            "slash" => 0xBF,
+            "insert" => (uint)Keys.Insert,
+            "delete" => (uint)Keys.Delete,
+            "home" => (uint)Keys.Home,
+            "end" => (uint)Keys.End,
+            "pageup" => (uint)Keys.PageUp,
+            "pagedown" => (uint)Keys.PageDown,
+            "controlleft" or "controlright" => (uint)Keys.ControlKey,
+            "shiftleft" or "shiftright" => (uint)Keys.ShiftKey,
+            "altleft" or "altright" => (uint)Keys.Menu,
             _ => 0
         };
     }
