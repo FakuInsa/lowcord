@@ -30,8 +30,11 @@ Lowcord/
 │   ├── Lowcord.Server/       # Servidor de señalización SignalR y servidor web (.NET 9)
 │   │   └── wwwroot/          # Interfaz web WebRTC (HTML5, CSS3, JS Vanilla)
 │   └── Lowcord.Client/       # Cliente nativo WinForms + WebView2 con atajos globales
-├── EJECUTABLES_LISTOS/       # Scripts de ejecución del host
-│   └── iniciar_host.ps1      # Orquestador del servidor y túnel
+├── docs/                     # Enlace fijo permanente para navegadores (GitHub Pages)
+├── EJECUTABLES_LISTOS/       # Scripts y binarios de ejecución directa
+│   ├── INICIAR.bat           # Inicia servidor, túnel y cliente nativo
+│   ├── Lowcord-Client.exe    # Cliente nativo para amigos (auto-conecta sin enlaces)
+│   └── Entrar-Por-Navegador.html # Acceso web rápido
 ├── INICIAR.bat               # Inicia la consola del servidor y abre la app
 ├── DETENER.bat               # Cierra tu instancia (amigos siguen en P2P)
 ├── DETENER-TODO.bat          # Cierra la sala para todos
@@ -42,10 +45,15 @@ Lowcord/
 
 ## Cómo Iniciar
 
+### Para el Anfitrión (Host):
 1. Ejecuta **`INICIAR.bat`**.
-2. La consola iniciará el servidor local y generará un enlace seguro de Cloudflare.
-3. El enlace se copiará automáticamente a tu portapapeles. Pégaselo a tus amigos por WhatsApp, Discord o Steam.
-4. ¡Listo! Ya están conectados en llamada directa.
+2. Tu servidor se levantará y se registrará automáticamente tu sala (`facu`).
+
+### Para tus Amigos:
+- **Con la app nativa:** Solo abren `Lowcord-Client.exe`. ¡No necesitan escribir nada ni pegar enlaces! El cliente detecta tu sala y entra automáticamente.
+- **Desde el Navegador (PC o Celular):** Entran a tu enlace permanente único que nunca cambia:
+  👉 **`https://fakuinsa.github.io/lowcord`**
+  (Si la sala aún no abrió, la página esperará y se conectará sola en cuanto abras `INICIAR.bat`).
 
 ---
 

@@ -45,7 +45,7 @@ while ($attempts -lt 25 -and -not $tunnelUrl) {
     $attempts++
 }
 
-# 4.5. Resolver código de sala (ej: facu) y publicar en el resolvedor P2P
+# 4.5. Resolver codigo de sala (ej: facu) y publicar en el resolvedor P2P
 $codeFile = Join-Path $PSScriptRoot "room_code.txt"
 $roomCode = "facu"
 if (Test-Path $codeFile) {
@@ -60,7 +60,7 @@ if ($tunnelUrl) {
         $encodedUrl = [System.Uri]::EscapeDataString($tunnelUrl)
         Invoke-RestMethod -Uri "https://api.keyval.org/set/lowcord_$roomCode/$encodedUrl" -TimeoutSec 5 -ErrorAction SilentlyContinue | Out-Null
     } catch {}
-    Set-Clipboard -Value $tunnelUrl
+    Set-Clipboard -Value "https://fakuinsa.github.io/lowcord"
 }
 
 # 5. Iniciar cliente nativo
@@ -73,12 +73,16 @@ Write-Host "                 LOWCORD - SERVIDOR ACTIVO Y VISIBLE                
 Write-Host "==========================================================================" -ForegroundColor Cyan
 Write-Host ""
 if ($tunnelUrl) {
-    Write-Host "  CÓDIGO DE TU SALA: " -NoNewline -ForegroundColor Green
+    Write-Host "  CODIGO DE TU SALA: " -NoNewline -ForegroundColor Green
     Write-Host "  $roomCode  " -ForegroundColor Black -BackgroundColor Yellow
-    Write-Host "  (Tus amigos abren Lowcord y solo escriben este código para entrar!)" -ForegroundColor Gray
+    Write-Host "  (Tus amigos con Lowcord-Client.exe entran automaticamente sin link!)" -ForegroundColor Gray
     Write-Host ""
-    Write-Host "  ENLACE WEB DIRECTO (Navegador PC o Celular - Ya en portapapeles):" -ForegroundColor Cyan
-    Write-Host "  >>>  $tunnelUrl  <<<" -ForegroundColor Yellow -BackgroundColor Black
+    Write-Host "  ENLACE WEB FIJO (Navegador PC o Celular - NUNCA CAMBIA):" -ForegroundColor Cyan
+    Write-Host "  https://fakuinsa.github.io/lowcord" -ForegroundColor Yellow
+    Write-Host "  (Ya copiado a tu portapapeles - Compartelo 1 sola vez)" -ForegroundColor DarkGray
+    Write-Host ""
+    Write-Host "  ENLACE DIRECTO DE SESION:" -ForegroundColor DarkGray
+    Write-Host "  $tunnelUrl" -ForegroundColor DarkGray
     Write-Host ""
 } else {
     Write-Host "  Servidor local listo en: http://localhost:8080" -ForegroundColor White
@@ -87,9 +91,9 @@ Write-Host "  ESTADO: SERVIDOR ACTIVO (Consola abierta de forma transparente)." 
 Write-Host "  Manten esta ventana abierta mientras juegues con tus amigos." -ForegroundColor Gray
 Write-Host ""
 Write-Host "  OPCIONES DE CIERRE:" -ForegroundColor Cyan
-Write-Host "  • DETENER.bat      -> Cierra tu servidor pero deja a tus amigos en P2P." -ForegroundColor White
-Write-Host "  • DETENER-TODO.bat -> Cierra la sala completa y desconecta a todos." -ForegroundColor White
-Write-Host "  • O presiona Ctrl + C en esta ventana para salir." -ForegroundColor DarkGray
+Write-Host "  - DETENER.bat      -> Cierra tu servidor pero deja a tus amigos en P2P." -ForegroundColor White
+Write-Host "  - DETENER-TODO.bat -> Cierra la sala completa y desconecta a todos." -ForegroundColor White
+Write-Host "  - O presiona Ctrl + C en esta ventana para salir." -ForegroundColor DarkGray
 Write-Host "==========================================================================" -ForegroundColor Cyan
 Write-Host ""
 

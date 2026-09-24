@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lowcord - Entrar a la Sala</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, Helvetica, Arial, sans-serif;
+    }
+
+    body {
+      background: linear-gradient(135deg, #111214 0%, #1e1f22 100%);
+      color: #f2f3f5;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+
+    .card {
+      background: #2b2d31;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 16px;
+      padding: 36px 30px;
+      width: 100%;
+      max-width: 440px;
+      text-align: center;
+      box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
+      animation: fadeIn 0.4s ease-out;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .logo-container {
+      width: 72px;
+      height: 72px;
+      background: linear-gradient(135deg, #5865F2 0%, #4752c4 100%);
+      border-radius: 20px;
+      margin: 0 auto 20px auto;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 8px 24px rgba(88, 101, 242, 0.35);
+      position: relative;
+    }
+
+    .logo-container svg {
+      width: 40px;
+      height: 40px;
+      fill: #ffffff;
+    }
+
+    .pulse-ring {
+      position: absolute;
+      width: 100%;
+      height: 100%;
+      border-radius: 20px;
+      border: 2px solid #5865F2;
+      animation: pulse 2s infinite;
+      pointer-events: none;
+    }
+
+    @keyframes pulse {
+      0% { transform: scale(1); opacity: 0.8; }
+      100% { transform: scale(1.3); opacity: 0; }
+    }
+
+    h1 {
+      font-size: 24px;
+      font-weight: 700;
+      margin-bottom: 8px;
+      letter-spacing: -0.5px;
+    }
+
+    .room-pill {
+      display: inline-block;
+      background: #1e1f22;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      padding: 6px 14px;
+      border-radius: 20px;
+      font-size: 14px;
+      color: #949ba4;
+      margin-bottom: 24px;
+    }
+
+    .room-pill span {
+      color: #5865F2;
+      font-weight: 700;
+    }
+
+    .status-box {
+      background: #1e1f22;
+      border-radius: 12px;
+      padding: 18px 16px;
+      margin-bottom: 24px;
+      border-left: 4px solid #f0b232;
+      text-align: left;
+      transition: all 0.3s ease;
+    }
+
+    .status-box.online {
+      border-left-color: #23a55a;
+    }
+
+    .status-box.offline {
+      border-left-color: #f23f43;
+    }
+
+    .status-title {
+      font-size: 14px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 6px;
+    }
+
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #f0b232;
+    }
+
+    .dot.online { background: #23a55a; }
+    .dot.offline { background: #f23f43; }
+
+    .status-desc {
+      font-size: 13px;
+      color: #949ba4;
+      line-height: 1.4;
+    }
+
+    .btn {
+      width: 100%;
+      padding: 13px;
+      background: #5865F2;
+      color: white;
+      border: none;
+      border-radius: 10px;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s, transform 0.1s;
+      margin-bottom: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+
+    .btn:hover {
+      background: #4752c4;
+    }
+
+    .btn:active {
+      transform: scale(0.98);
+    }
+
+    .btn:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
+    .secondary-link {
+      color: #949ba4;
+      font-size: 13px;
+      text-decoration: none;
+      cursor: pointer;
+      display: inline-block;
+      margin-top: 10px;
+    }
+
+    .secondary-link:hover {
+      color: #dbdee1;
+      text-decoration: underline;
+    }
+
+    .custom-room-form {
+      display: none;
+      margin-top: 16px;
+      padding-top: 16px;
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .custom-room-form input {
+      width: 100%;
+      padding: 10px 14px;
+      background: #1e1f22;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 8px;
+      color: white;
+      font-size: 14px;
+      margin-bottom: 10px;
+      outline: none;
+    }
+
+    .custom-room-form input:focus {
+      border-color: #5865F2;
+    }
+
+    .timer-text {
+      font-size: 12px;
+      color: #80848e;
+      margin-top: 8px;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="card">
+    <div class="logo-container">
+      <div class="pulse-ring" id="pulseRing"></div>
+      <svg viewBox="0 0 24 24">
+        <path d="M12 3a9 9 0 0 0-9 9v7a3 3 0 0 0 3 3h1a1 1 0 0 0 1-1v-6a1 1 0 0 0-1-1H5v-3a7 7 0 1 1 14 0v3h-2a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h1a3 3 0 0 0 3-3v-7a9 9 0 0 0-9-9z"/>
+      </svg>
+    </div>
+
+    <h1>Lowcord Web</h1>
+    <div class="room-pill">Sala: <span id="roomNameDisplay">facu</span></div>
+
+    <div class="status-box" id="statusBox">
+      <div class="status-title">
+        <div class="dot" id="statusDot"></div>
+        <span id="statusTitle">Buscando sala...</span>
+      </div>
+      <div class="status-desc" id="statusDesc">
+        Conectando al registro P2P para encontrar la sala de tu amigo...
+      </div>
+    </div>
+
+    <button class="btn" id="actionBtn" onclick="checkRoom(true)">
+      <span id="btnText">Reintentar Ahora</span>
+    </button>
+
+    <div class="timer-text" id="timerText">Reintentando automaticamente en 3s...</div>
+
+    <div>
+      <a class="secondary-link" onclick="toggleCustomRoom()">Cambiar sala / codigo</a>
+    </div>
+
+    <div class="custom-room-form" id="customRoomForm">
+      <input type="text" id="customRoomInput" placeholder="Nombre de la sala (ej: facu)">
+      <button class="btn" onclick="saveCustomRoom()">Entrar a esta sala</button>
+    </div>
+  </div>
+
+  <script>
+    const urlParams = new URLSearchParams(window.location.search);
+    let currentRoom = (urlParams.get('room') || 'facu').trim().toLowerCase();
+
+    document.getElementById('roomNameDisplay').textContent = currentRoom;
+
+    let countdown = 3;
+    let timerId = null;
+    let isChecking = false;
+
+    async function checkRoom(isManual = false) {
+      if (isChecking) return;
+      isChecking = true;
+
+      const statusBox = document.getElementById('statusBox');
+      const statusDot = document.getElementById('statusDot');
+      const statusTitle = document.getElementById('statusTitle');
+      const statusDesc = document.getElementById('statusDesc');
+      const pulseRing = document.getElementById('pulseRing');
+
+      if (isManual) {
+        statusTitle.textContent = "Verificando conexión...";
+        statusDesc.textContent = "Consultando el estado actual de la sala...";
+      }
+
+      try {
+        // Consultar con timestamp para evitar cache en navegadores moviles
+        const res = await fetch(`https://api.keyval.org/get/lowcord_${encodeURIComponent(currentRoom)}?_t=${Date.now()}`);
+        if (!res.ok) throw new Error("Error de red");
+
+        const data = await res.json();
+
+        if (data && data.status === 'SUCCESS' && data.val) {
+          const val = data.val.trim();
+          if ((val.startsWith('http://') || val.startsWith('https://')) && val.toLowerCase() !== 'offline') {
+            // ¡SALA ENCONTRADA!
+            statusBox.className = "status-box online";
+            statusDot.className = "dot online";
+            statusTitle.textContent = "¡Sala Encontrada!";
+            statusDesc.textContent = "Conectando a la llamada WebRTC...";
+            pulseRing.style.borderColor = "#23a55a";
+
+            document.getElementById('btnText').textContent = "Conectando...";
+            document.getElementById('actionBtn').disabled = true;
+            document.getElementById('timerText').textContent = "Redirigiendo de inmediato...";
+
+            if (timerId) clearInterval(timerId);
+
+            // Redirección directa e instantánea
+            setTimeout(() => {
+              window.location.replace(val);
+            }, 600);
+            return;
+          }
+        }
+
+        // Si la sala está offline
+        statusBox.className = "status-box offline";
+        statusDot.className = "dot offline";
+        statusTitle.textContent = "Sala fuera de línea";
+        statusDesc.textContent = `La sala "${currentRoom}" no está activa en este momento. Esperando a que el anfitrión abra Lowcord...`;
+        pulseRing.style.borderColor = "#f23f43";
+
+      } catch (err) {
+        statusBox.className = "status-box offline";
+        statusDot.className = "dot offline";
+        statusTitle.textContent = "Esperando al anfitrión...";
+        statusDesc.textContent = "Apenas tu amigo inicie Lowcord en su PC, esta página entrará automáticamente.";
+      } finally {
+        isChecking = false;
+        resetCountdown();
+      }
+    }
+
+    function resetCountdown() {
+      countdown = 3;
+      updateTimerText();
+      if (timerId) clearInterval(timerId);
+      timerId = setInterval(() => {
+        countdown--;
+        updateTimerText();
+        if (countdown <= 0) {
+          clearInterval(timerId);
+          checkRoom();
+        }
+      }, 1000);
+    }
+
+    function updateTimerText() {
+      const timerElem = document.getElementById('timerText');
+      if (timerElem) {
+        timerElem.textContent = `Reintentando automáticamente en ${countdown}s...`;
+      }
+    }
+
+    function toggleCustomRoom() {
+      const form = document.getElementById('customRoomForm');
+      form.style.display = form.style.display === 'block' ? 'none' : 'block';
+      if (form.style.display === 'block') {
+        document.getElementById('customRoomInput').value = currentRoom;
+        document.getElementById('customRoomInput').focus();
+      }
+    }
+
+    function saveCustomRoom() {
+      const input = document.getElementById('customRoomInput');
+      const val = input.value.trim().toLowerCase();
+      if (val) {
+        const url = new URL(window.location.href);
+        url.searchParams.set('room', val);
+        window.location.href = url.toString();
+      }
+    }
+
+    // Iniciar chequeo de inmediato al cargar la página
+    checkRoom();
+  </script>
+</body>
+</html>
