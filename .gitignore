@@ -26,6 +26,8 @@ Crashpad/
 *.log
 cloudflared.log
 server.txt
+room_code.txt
+EJECUTABLES_LISTOS/room_code.txt
 
 # Entornos de desarrollo e IDEs
 .vs/

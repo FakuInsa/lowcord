@@ -1,3 +1,7 @@
+param(
+    [switch]$NoClient
+)
+
 $Host.UI.RawUI.WindowTitle = "Lowcord - Consola del Servidor (Activo)"
 
 $serverExe = Join-Path $PSScriptRoot "Servidor\Lowcord.Server.exe"
@@ -45,14 +49,18 @@ while ($attempts -lt 25 -and -not $tunnelUrl) {
     $attempts++
 }
 
-# 4.5. Resolver codigo de sala (ej: facu) y publicar en el resolvedor P2P
+# 4.5. Resolver codigo de sala (lee room_code.txt si existe, o genera uno unico)
 $codeFile = Join-Path $PSScriptRoot "room_code.txt"
-$roomCode = "facu"
+$roomCode = $null
 if (Test-Path $codeFile) {
     $custom = (Get-Content $codeFile -Raw -ErrorAction SilentlyContinue).Trim().ToLower()
     if ($custom) { $roomCode = $custom }
-} else {
-    Set-Content -Path $codeFile -Value "facu" -Encoding UTF8
+}
+if (-not $roomCode) {
+    $defaultRoom = ($env:USERNAME -replace '[^a-zA-Z0-9]', '').ToLower()
+    if (-not $defaultRoom) { $defaultRoom = "sala-" + (Get-Random -Minimum 1000 -Maximum 9999) }
+    $roomCode = $defaultRoom
+    Set-Content -Path $codeFile -Value $roomCode -Encoding UTF8
 }
 
 if ($tunnelUrl) {
@@ -63,9 +71,13 @@ if ($tunnelUrl) {
     Set-Clipboard -Value "https://fakuinsa.github.io/lowcord"
 }
 
-# 5. Iniciar cliente nativo
-Write-Host " [3/3] Abriendo aplicacion Lowcord..." -ForegroundColor Yellow
-Start-Process -FilePath $clientExe -WorkingDirectory $PSScriptRoot
+# 5. Iniciar cliente nativo si no esta en modo dedicado (-NoClient)
+if (-not $NoClient) {
+    Write-Host " [3/3] Abriendo aplicacion Lowcord..." -ForegroundColor Yellow
+    Start-Process -FilePath $clientExe -WorkingDirectory $PSScriptRoot
+} else {
+    Write-Host " [3/3] Modo Servidor Dedicado (sin cliente grafico local)..." -ForegroundColor Magenta
+}
 
 Clear-Host
 Write-Host "==========================================================================" -ForegroundColor Cyan
@@ -87,7 +99,11 @@ if ($tunnelUrl) {
 } else {
     Write-Host "  Servidor local listo en: http://localhost:8080" -ForegroundColor White
 }
-Write-Host "  ESTADO: SERVIDOR ACTIVO (Consola abierta de forma transparente)." -ForegroundColor Green
+if ($NoClient) {
+    Write-Host "  MODO: SERVIDOR DEDICADO (Solo backend + tunel activo)." -ForegroundColor Magenta
+} else {
+    Write-Host "  ESTADO: SERVIDOR ACTIVO (Consola abierta de forma transparente)." -ForegroundColor Green
+}
 Write-Host "  Manten esta ventana abierta mientras juegues con tus amigos." -ForegroundColor Gray
 Write-Host ""
 Write-Host "  OPCIONES DE CIERRE:" -ForegroundColor Cyan

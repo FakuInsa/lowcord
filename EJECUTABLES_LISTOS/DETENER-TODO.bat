@@ -10,7 +10,7 @@ powershell -NoProfile -Command "try { $null = Invoke-RestMethod -Uri 'http://loc
 timeout /t 1 /nobreak >nul
 
 REM 2. Marcar sala como offline en el registro publico
-powershell -NoProfile -Command "try { $rc = 'facu'; if (Test-Path '%~dp0EJECUTABLES_LISTOS\room_code.txt') { $rc = (Get-Content '%~dp0EJECUTABLES_LISTOS\room_code.txt' -Raw).Trim() } elseif (Test-Path '%~dp0room_code.txt') { $rc = (Get-Content '%~dp0room_code.txt' -Raw).Trim() }; Invoke-RestMethod -Uri ('https://api.keyval.org/set/lowcord_' + $rc + '/offline') -TimeoutSec 2 -ErrorAction SilentlyContinue } catch {}" >nul 2>&1
+powershell -NoProfile -Command "try { $rc = 'facu'; if (Test-Path '%~dp0room_code.txt') { $rc = (Get-Content '%~dp0room_code.txt' -Raw).Trim() }; Invoke-RestMethod -Uri ('https://api.keyval.org/set/lowcord_' + $rc + '/offline') -TimeoutSec 2 -ErrorAction SilentlyContinue } catch {}" >nul 2>&1
 
 REM 3. Terminar procesos en tu equipo
 taskkill /F /IM Lowcord-Client.exe >nul 2>&1
