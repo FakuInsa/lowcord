@@ -43,6 +43,7 @@ jobs:
           # Paquete solo cliente para amigos
           New-Item -ItemType Directory -Path "client_only" -Force
           Copy-Item -Path "release_package/Lowcord.Client.exe" -Destination "client_only/Lowcord-Client.exe" -Force
+          Copy-Item -Path "release_package/Lowcord.Client.exe" -Destination "release_package/Lowcord-Client.exe" -Force
           Compress-Archive -Path "client_only/*" -DestinationPath "Lowcord-Client-Windows-x64.zip" -Force
           
           # Paquete completo para anfitrion
