@@ -62,7 +62,7 @@ let screenQuality = {
 };
 
 let isPttActive = false;
-let isGateOpen = false;
+let isGateOpen = true;
 let gateHangoverTimer = null;
 let pttHangoverTimer = null;
 let isRecordingKeybind = false;
@@ -227,18 +227,25 @@ function applyMicTransmissionState() {
       }
     });
   }
+  if (localAudioStream && localAudioStream !== rawMicStream) {
+    localAudioStream.getAudioTracks().forEach(track => {
+      if (track.enabled !== shouldTransmit) {
+        track.enabled = shouldTransmit;
+      }
+    });
+  }
 }
 
 async function initLocalAudio() {
   const audioConstraints = {
-    echoCancellation: { ideal: true },
-    noiseSuppression: { ideal: true },
+    echoCancellation: { ideal: noiseSuppressionEnabled },
+    noiseSuppression: { ideal: noiseSuppressionEnabled },
     autoGainControl: { ideal: true },
-    googEchoCancellation: true,
+    googEchoCancellation: noiseSuppressionEnabled,
     googAutoGainControl: true,
-    googNoiseSuppression: true,
+    googNoiseSuppression: noiseSuppressionEnabled,
     googHighpassFilter: true,
-    googTypingNoiseDetection: true,
+    googTypingNoiseDetection: noiseSuppressionEnabled,
     googAudioMirroring: false
   };
 
@@ -255,17 +262,18 @@ async function initLocalAudio() {
     console.warn('Fallo dispositivo guardado, usando predeterminado:', err);
     rawMicStream = await navigator.mediaDevices.getUserMedia({
       audio: {
-        echoCancellation: true,
-        noiseSuppression: true,
+        echoCancellation: noiseSuppressionEnabled,
+        noiseSuppression: noiseSuppressionEnabled,
         autoGainControl: true,
-        googEchoCancellation: true,
-        googNoiseSuppression: true,
-        googTypingNoiseDetection: true
+        googEchoCancellation: noiseSuppressionEnabled,
+        googNoiseSuppression: noiseSuppressionEnabled,
+        googTypingNoiseDetection: noiseSuppressionEnabled
       },
       video: false
     });
   }
 
+  isGateOpen = true;
   setupLocalAudioProcessing();
 }
 
@@ -294,6 +302,7 @@ function setupLocalAudioProcessing() {
   // Conectar a filtro paso alto exclusivamente para el analizador de voz (VAD y medidor)
   micSourceNode.connect(micHighPassFilter);
 
+  isGateOpen = true;
   applyMicTransmissionState();
 
   // Analizar la voz luego del filtro para que ruidos graves no abran la compuerta
@@ -1304,6 +1313,10 @@ function toggleMic() {
   if (isMicMuted) {
     isGateOpen = false;
     isPttActive = false;
+  } else {
+    if (inputMode === 'vad') {
+      isGateOpen = true;
+    }
   }
   applyMicTransmissionState();
 
@@ -1432,6 +1445,10 @@ let lastLocalSpeakingState = false;
 function setupSpeakingDetection(streamOrNode, containerId) {
   try {
     const audioContext = getAudioContext();
+    if (audioContext.state === 'suspended') {
+      audioContext.resume().catch(e => {});
+    }
+
     const analyser = audioContext.createAnalyser();
     analyser.fftSize = 256;
     analyser.smoothingTimeConstant = 0.4;
@@ -1442,6 +1459,16 @@ function setupSpeakingDetection(streamOrNode, containerId) {
       const source = audioContext.createMediaStreamSource(streamOrNode);
       source.connect(analyser);
     }
+
+    // Nodo sumidero silencioso obligatorio:
+    // En Chromium (Blink), si un nodo AnalyserNode no llega a un AudioDestinationNode,
+    // el pipeline de audio no procesa tramas (devuelve todo ceros).
+    // Conectamos a un Gain de volumen 0 hacia destination para bombear las muestras.
+    const silentGain = audioContext.createGain();
+    silentGain.gain.value = 0.0;
+    analyser.connect(silentGain);
+    silentGain.connect(audioContext.destination);
+
     const buffer = new Uint8Array(analyser.frequencyBinCount);
 
     if (containerId === 'local-participant') {
@@ -1472,7 +1499,7 @@ function setupSpeakingDetection(streamOrNode, containerId) {
 
         // 2. Control de Puerta de Ruido en modo Actividad de Voz (VAD)
         if (!isMicMuted && inputMode === 'vad') {
-          if (pct >= vadThreshold) {
+          if (vadThreshold <= 0 || pct >= vadThreshold) {
             if (gateHangoverTimer) {
               clearTimeout(gateHangoverTimer);
               gateHangoverTimer = null;
@@ -1487,7 +1514,7 @@ function setupSpeakingDetection(streamOrNode, containerId) {
                 isGateOpen = false;
                 applyMicTransmissionState();
                 gateHangoverTimer = null;
-              }, 250);
+              }, 400); // 400ms para no cortar colas de palabras
             }
           }
         }
@@ -1690,6 +1717,8 @@ function setInputMode(mode) {
     keybindTitleLabel.innerText = 'Atajo de Teclado para Silenciar';
     keybindStatusHint.innerText = 'Presiona para mutear o desmutear (funciona en juegos).';
     isPttActive = false;
+    isGateOpen = true;
+    applyMicTransmissionState();
   } else {
     keybindTitleLabel.innerText = 'Tecla para Pulsar para Hablar';
     keybindStatusHint.innerText = 'Mantén presionada esta tecla para hablar.';
