@@ -60,7 +60,12 @@ app.UseCors();
 
 // 5. Servir archivos estáticos del frontend desde la carpeta resuelta
 app.UseDefaultFiles();
-app.UseStaticFiles();
+var contentTypeProvider = new Microsoft.AspNetCore.StaticFiles.FileExtensionContentTypeProvider();
+contentTypeProvider.Mappings[".wasm"] = "application/wasm";
+app.UseStaticFiles(new StaticFileOptions
+{
+    ContentTypeProvider = contentTypeProvider
+});
 
 // 6. Mapear SignalR Hub y endpoints
 app.MapHub<SignalingHub>("/signalingHub");

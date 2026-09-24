@@ -136,13 +136,25 @@
           </div>
         </div>
 
-        <!-- SUPRESIÓN DE RUIDO DSP -->
+        <!-- SUPRESIÓN DE RUIDO POR IA (RNNOISE) -->
         <div class="toggle-group">
+          <label class="toggle-container">
+            <input type="checkbox" id="chk-rnnoise" checked>
+            <span class="toggle-slider"></span>
+          </label>
+          <div>
+            <span class="toggle-label" style="display:block; font-weight:600;">Supresión de Ruido por IA (RNNoise)</span>
+            <span class="settings-hint" style="margin-top:2px;">Red neuronal profunda que elimina tecleo, golpes y ruidos de fondo sin cortar la voz.</span>
+          </div>
+        </div>
+
+        <!-- CANCELACIÓN DE ECO DEL NAVEGADOR -->
+        <div class="toggle-group" style="margin-top: 10px;">
           <label class="toggle-container">
             <input type="checkbox" id="chk-noise-suppression" checked>
             <span class="toggle-slider"></span>
           </label>
-          <span class="toggle-label">Supresión de Ruido y Cancelación de Eco del Navegador</span>
+          <span class="toggle-label">Cancelación de Eco Estándar del Navegador</span>
         </div>
 
         <!-- SONIDOS DE SILENCIADO (ESTILO DISCORD) -->

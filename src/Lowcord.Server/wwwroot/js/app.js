@@ -32,7 +32,12 @@ let isScreenSharing = false;
 let sharedAudioContext = null;
 function getAudioContext() {
   if (!sharedAudioContext) {
-    sharedAudioContext = new (window.AudioContext || window.webkitAudioContext)();
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    try {
+      sharedAudioContext = new AudioCtx({ sampleRate: 48000, latencyHint: 'interactive' });
+    } catch (e) {
+      sharedAudioContext = new AudioCtx();
+    }
   }
   if (sharedAudioContext.state === 'suspended') {
     sharedAudioContext.resume().catch(e => {});
@@ -53,6 +58,7 @@ let activeKeybind = {
   label: localStorage.getItem('lowcord_keybind_label') || 'M'
 };
 let noiseSuppressionEnabled = localStorage.getItem('lowcord_noise_suppression') !== 'false';
+let rnnoiseEnabled = localStorage.getItem('lowcord_rnnoise_enabled') !== 'false';
 
 // Configuración de pantalla compartida (resolución, FPS y ahorro de GPU)
 let screenQuality = {
@@ -70,6 +76,8 @@ let isRecordingKeybind = false;
 let rawMicStream = null;
 let micSourceNode = null;
 let micHighPassFilter = null;
+let rnnoiseNode = null;
+let rnnoiseDestination = null;
 let micGateGainNode = null;
 let outboundMicDestination = null;
 let signalrPingInterval = null;
@@ -133,6 +141,7 @@ const btnRecordKeybind = document.getElementById('btn-record-keybind');
 const keybindDisplayText = document.getElementById('keybind-display-text');
 const keybindStatusHint = document.getElementById('keybind-status-hint');
 const chkNoiseSuppression = document.getElementById('chk-noise-suppression');
+const chkRnnoise = document.getElementById('chk-rnnoise');
 
 // Modal de calidad de pantalla
 const screenQualityModal = document.getElementById('screen-quality-modal');
@@ -236,6 +245,86 @@ function applyMicTransmissionState() {
   }
 }
 
+// =========================================================
+// RNNOISE: SUPRESIÓN DE RUIDO POR IA (RED NEURONAL GRU / WASM)
+// =========================================================
+class RNNoiseNode extends AudioWorkletNode {
+  static module = null;
+  static ready = false;
+  static registeringPromise = null;
+
+  static async register(audioContext) {
+    if (RNNoiseNode.ready) return;
+    if (RNNoiseNode.registeringPromise) return RNNoiseNode.registeringPromise;
+
+    RNNoiseNode.registeringPromise = (async () => {
+      try {
+        const wasmUrl = '/js/rnnoise/rnnoise.wasm';
+        const workletUrl = '/js/rnnoise/rnnoise.worklet.js';
+
+        let wasmModule;
+        if (typeof WebAssembly.compileStreaming === 'function') {
+          try {
+            wasmModule = await WebAssembly.compileStreaming(fetch(wasmUrl));
+          } catch (e) {
+            const resp = await fetch(wasmUrl);
+            const buffer = await resp.arrayBuffer();
+            wasmModule = await WebAssembly.compile(buffer);
+          }
+        } else {
+          const resp = await fetch(wasmUrl);
+          const buffer = await resp.arrayBuffer();
+          wasmModule = await WebAssembly.compile(buffer);
+        }
+
+        await audioContext.audioWorklet.addModule(workletUrl);
+        RNNoiseNode.module = wasmModule;
+        RNNoiseNode.ready = true;
+        console.log('[RNNoise] Módulo neuronal WebAssembly AudioWorklet cargado con éxito.');
+      } catch (err) {
+        console.error('[RNNoise] Error al compilar o registrar AudioWorklet:', err);
+        throw err;
+      } finally {
+        RNNoiseNode.registeringPromise = null;
+      }
+    })();
+
+    return RNNoiseNode.registeringPromise;
+  }
+
+  constructor(audioContext) {
+    if (!RNNoiseNode.ready || !RNNoiseNode.module) {
+      throw new Error("RNNoiseNode no está listo. Llama a RNNoiseNode.register(audioContext) primero.");
+    }
+    super(audioContext, "rnnoise", {
+      channelCountMode: "explicit",
+      channelCount: 1,
+      channelInterpretation: "speakers",
+      numberOfInputs: 1,
+      numberOfOutputs: 1,
+      outputChannelCount: [1],
+      processorOptions: { module: RNNoiseNode.module }
+    });
+  }
+}
+
+function updateOutboundAudioTracks() {
+  if (!localAudioStream) return;
+  const activeTrack = localAudioStream.getAudioTracks()[0];
+  if (!activeTrack) return;
+
+  peers.forEach(peer => {
+    if (!peer.pc) return;
+    const senders = peer.pc.getSenders();
+    const audioSender = senders.find(s => s.track && s.track.kind === 'audio' && !peer.screenSenders.includes(s));
+    if (audioSender) {
+      audioSender.replaceTrack(activeTrack).catch(err => {
+        console.warn('[WebRTC] Fallo al reemplazar pista con replaceTrack:', err);
+      });
+    }
+  });
+}
+
 async function initLocalAudio() {
   const audioConstraints = {
     echoCancellation: { ideal: noiseSuppressionEnabled },
@@ -274,16 +363,19 @@ async function initLocalAudio() {
   }
 
   isGateOpen = true;
-  setupLocalAudioProcessing();
+  await setupLocalAudioProcessing();
 }
 
-function setupLocalAudioProcessing() {
+async function setupLocalAudioProcessing() {
   if (!rawMicStream) return;
-  localAudioStream = rawMicStream;
   const ctx = getAudioContext();
 
   if (micSourceNode) {
     try { micSourceNode.disconnect(); } catch(e){}
+  }
+  if (rnnoiseNode) {
+    try { rnnoiseNode.disconnect(); } catch(e){}
+    rnnoiseNode = null;
   }
 
   micSourceNode = ctx.createMediaStreamSource(rawMicStream);
@@ -299,13 +391,38 @@ function setupLocalAudioProcessing() {
     micHighPassFilter.Q.value = 0.8;
   }
 
-  // Conectar a filtro paso alto exclusivamente para el analizador de voz (VAD y medidor)
+  // 1. Conectar a filtro paso alto exclusivamente para el analizador de voz (VAD y medidor)
   micSourceNode.connect(micHighPassFilter);
+
+  // 2. Si la supresión de ruido por IA (RNNoise) está activa:
+  if (rnnoiseEnabled) {
+    try {
+      if (!RNNoiseNode.ready) {
+        await RNNoiseNode.register(ctx);
+      }
+      rnnoiseNode = new RNNoiseNode(ctx);
+      rnnoiseDestination = ctx.createMediaStreamDestination();
+
+      micSourceNode.connect(rnnoiseNode);
+      rnnoiseNode.connect(rnnoiseDestination);
+
+      localAudioStream = rnnoiseDestination.stream;
+      console.log('[RNNoise] Supresión de ruido por IA activada en la transmisión.');
+    } catch (err) {
+      console.warn('[RNNoise] No se pudo activar la red neuronal, usando flujo directo:', err);
+      localAudioStream = rawMicStream;
+    }
+  } else {
+    localAudioStream = rawMicStream;
+  }
 
   isGateOpen = true;
   applyMicTransmissionState();
 
-  // Analizar la voz luego del filtro para que ruidos graves no abran la compuerta
+  // 3. Reemplazar la pista en todas las conexiones peer activas si ya estamos en llamada
+  updateOutboundAudioTracks();
+
+  // 4. Analizar la voz luego del filtro para que ruidos graves no abran la compuerta
   setupSpeakingDetection(micHighPassFilter, 'local-participant');
 }
 
@@ -405,7 +522,7 @@ selectAudioInput.addEventListener('change', async () => {
     currentInputDeviceId = newDeviceId;
     localStorage.setItem('lowcord_input_device', newDeviceId);
 
-    setupLocalAudioProcessing();
+    await setupLocalAudioProcessing();
 
   } catch (err) {
     console.error('Error al cambiar de micrófono:', err);
@@ -1367,6 +1484,11 @@ async function leaveVoiceChannel() {
     rawMicStream.getTracks().forEach(t => t.stop());
     rawMicStream = null;
   }
+  if (rnnoiseNode) {
+    try { rnnoiseNode.disconnect(); } catch(e){}
+    rnnoiseNode = null;
+  }
+  rnnoiseDestination = null;
   localAudioStream = null;
 
   if (localScreenStream) {
@@ -1671,6 +1793,7 @@ function initAdvancedAudioSettingsUI() {
   sensitivityCutoffLine.style.left = `${vadThreshold}%`;
 
   keybindDisplayText.innerText = activeKeybind.label;
+  if (chkRnnoise) chkRnnoise.checked = rnnoiseEnabled;
   chkNoiseSuppression.checked = noiseSuppressionEnabled;
 
   btnModeVad.addEventListener('click', () => setInputMode('vad'));
@@ -1692,6 +1815,16 @@ function initAdvancedAudioSettingsUI() {
       keybindDisplayText.innerText = 'Presiona tecla...';
     }
   });
+
+  if (chkRnnoise) {
+    chkRnnoise.addEventListener('change', async (e) => {
+      rnnoiseEnabled = e.target.checked;
+      localStorage.setItem('lowcord_rnnoise_enabled', rnnoiseEnabled ? 'true' : 'false');
+      if (rawMicStream) {
+        await setupLocalAudioProcessing();
+      }
+    });
+  }
 
   chkNoiseSuppression.addEventListener('change', async (e) => {
     noiseSuppressionEnabled = e.target.checked;
@@ -1765,7 +1898,7 @@ async function reloadLocalAudio() {
       rawMicStream.getTracks().forEach(t => t.stop());
     }
     rawMicStream = newStream;
-    setupLocalAudioProcessing();
+    await setupLocalAudioProcessing();
 
     // Reemplazar la pista en todas las conexiones peer activas
     const newTrack = newStream.getAudioTracks()[0];
