@@ -26,23 +26,25 @@ Lowcord es una alternativa autoalojada y minimalista a Discord. Permite llamadas
 
 ```text
 Lowcord/
-├── src/
-│   ├── Lowcord.Server/            # Servidor de señalización SignalR y servidor web (.NET 9)
-│   │   └── wwwroot/               # Interfaz web WebRTC (HTML5, CSS3, JS Vanilla)
-│   └── Lowcord.Client/            # Cliente nativo WinForms + WebView2 con atajos globales
-├── docs/                          # Redireccionador web permanente (GitHub Pages)
-├── EJECUTABLES_LISTOS/            # Paquete portable listo para ejecutar y compartir
-│   ├── INICIAR.bat                # Inicia servidor local, túnel y cliente nativo
-│   ├── INICIAR-SERVIDOR.bat       # Inicia solo el backend y túnel (modo headless)
-│   ├── DETENER.bat                # Cierra tu instancia (amigos continúan en P2P)
-│   ├── DETENER-TODO.bat           # Cierra la llamada para todos
-│   ├── Entrar-Por-Navegador.html  # Acceso web rápido en PC
-│   └── room_code.txt.example      # Ejemplo para nombrar tu sala
-├── INICIAR.bat                    # Inicia servidor y cliente desde la raíz
-├── INICIAR-SERVIDOR.bat           # Inicia solo el servidor desde la raíz
-├── DETENER.bat                    # Cierra servidor local (amigos siguen en P2P)
-├── DETENER-TODO.bat               # Cierra la llamada para todos
-└── COMPILAR.bat                   # Compila el código fuente (.NET 9)
+├── .github/workflows/         # Flujos CI/CD (GitHub Pages y Releases automáticos)
+├── docs/                      # Redireccionador web permanente (GitHub Pages)
+├── src/                       # Código fuente del proyecto (.NET 9)
+│   ├── Lowcord.Server/        # Servidor de señalización SignalR y WebRTC
+│   └── Lowcord.Client/        # Cliente nativo WinForms + WebView2
+├── EJECUTABLES_LISTOS/        # Binarios y paquete portable de ejecución
+│   ├── INICIAR.bat            # Inicia servidor local, túnel y cliente nativo
+│   ├── INICIAR-SERVIDOR.bat   # Inicia solo backend y túnel (modo headless)
+│   ├── DETENER.bat            # Detiene el servidor y finaliza la llamada
+│   ├── Entrar-Por-Navegador.html # Acceso web rápido en PC
+│   └── room_code.txt.example  # Plantilla de código de sala
+├── INICIAR.bat                # Inicia Lowcord completo desde la raíz
+├── INICIAR-SERVIDOR.bat       # Inicia solo el servidor desde la raíz
+├── DETENER.bat                # Detiene el servidor y cierra la sala
+├── COMPILAR.bat               # Compila el código fuente (.NET 9)
+├── Dockerfile                 # Contenedor Docker para el servidor
+├── docker-compose.yml         # Orquestación con Docker Compose
+├── LICENSE                    # Licencia MIT
+└── README.md                  # Documentación
 ```
 
 ---
