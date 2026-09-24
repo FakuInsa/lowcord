@@ -1,3 +1,4 @@
+using System.Net.Http;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using Microsoft.Web.WebView2.Core;
@@ -31,6 +32,8 @@ public class MainForm : Form
 
     [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
     private static extern IntPtr GetModuleHandle(string? lpModuleName);
+
+    private static readonly HttpClient _httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(6) };
 
     private WebView2 _webView = null!;
     private readonly string _configFile = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "server.txt");
@@ -67,13 +70,13 @@ public class MainForm : Form
 
         Controls.Add(_webView);
 
-        // Tecla F2 para cambiar la URL del servidor manualmente en cualquier momento
+        // Tecla F2 para cambiar de sala o servidor en cualquier momento
         KeyPreview = true;
         KeyDown += (s, e) =>
         {
             if (e.KeyCode == Keys.F2)
             {
-                PromptChangeServer("Ingresa la URL o IP del servidor Lowcord (ej: https://...):");
+                PromptChangeServer("Ingresa el CÓDIGO de la sala (ej: facu) o el enlace completo:");
             }
         };
     }
@@ -128,11 +131,11 @@ public class MainForm : Form
             {
                 if (!args.IsSuccess && args.WebErrorStatus != CoreWebView2WebErrorStatus.OperationCanceled)
                 {
-                    PromptChangeServer("No se pudo conectar a la dirección actual.\nIngresa el enlace o IP que te pasó tu amigo:");
+                    PromptChangeServer("No se pudo conectar a la sala actual.\nIngresa el CÓDIGO de sala (ej: facu) o el enlace de tu amigo:");
                 }
             };
 
-            NavigateToServer();
+            _ = NavigateToServerAsync();
         }
         catch (Exception ex)
         {
@@ -145,26 +148,72 @@ public class MainForm : Form
         }
     }
 
-    private void NavigateToServer()
+    private async Task<string?> ResolveInputToUrlAsync(string input)
     {
-        if (Uri.TryCreate(_serverUrl, UriKind.Absolute, out var uri))
+        input = input.Trim();
+        if (string.IsNullOrWhiteSpace(input)) return null;
+
+        // Si ya es una URL completa
+        if (input.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+            input.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+        {
+            return input;
+        }
+
+        // Si es localhost o IP directa
+        if (input.StartsWith("localhost", StringComparison.OrdinalIgnoreCase) ||
+            input.StartsWith("127.0.0.1") ||
+            (input.Contains(':') && !input.Contains(' ')))
+        {
+            return "http://" + input;
+        }
+
+        // Si es un código de sala (ej: "facu")
+        var code = input.ToLowerInvariant();
+        try
+        {
+            var res = await _httpClient.GetStringAsync($"https://api.keyval.org/get/lowcord_{code}");
+            using var doc = JsonDocument.Parse(res);
+            if (doc.RootElement.TryGetProperty("val", out var valProp))
+            {
+                var val = valProp.GetString();
+                if (!string.IsNullOrWhiteSpace(val) && (val.StartsWith("http://") || val.StartsWith("https://")))
+                {
+                    return val;
+                }
+            }
+        }
+        catch
+        {
+            // Error de conexión con keyval
+        }
+
+        return null;
+    }
+
+    private async Task NavigateToServerAsync()
+    {
+        var resolved = await ResolveInputToUrlAsync(_serverUrl);
+        if (!string.IsNullOrEmpty(resolved) && Uri.TryCreate(resolved, UriKind.Absolute, out var uri))
         {
             _webView.Source = uri;
         }
         else
         {
-            PromptChangeServer("Ingresa la URL del servidor:");
+            PromptChangeServer("Ingresa el CÓDIGO de la sala (ej: facu) o el enlace completo:");
         }
     }
 
-    private void PromptChangeServer(string message = "Ingresa la URL del servidor:")
+    private void PromptChangeServer(string message = "Ingresa el CÓDIGO de sala (ej: facu) o enlace:")
     {
         using var prompt = new Form
         {
-            Width = 480,
-            Height = 220,
+            Width = 500,
+            Height = 240,
             FormBorderStyle = FormBorderStyle.FixedDialog,
-            Text = "Conectar a Servidor Lowcord",
+            MaximizeBox = false,
+            MinimizeBox = false,
+            Text = "Conectar a Sala Lowcord",
             StartPosition = FormStartPosition.CenterParent,
             BackColor = Color.FromArgb(43, 45, 49),
             ForeColor = Color.White
@@ -174,73 +223,113 @@ public class MainForm : Form
         {
             Left = 20,
             Top = 15,
-            Width = 420,
-            Height = 40,
-            Text = message
+            Width = 445,
+            Height = 45,
+            Text = message,
+            Font = new Font("Segoe UI", 9.5f)
         };
 
         var textBox = new TextBox
         {
             Left = 20,
-            Top = 65,
-            Width = 420,
+            Top = 68,
+            Width = 445,
             Text = _serverUrl,
             BackColor = Color.FromArgb(30, 31, 34),
             ForeColor = Color.White,
-            Font = new Font("Segoe UI", 10)
+            Font = new Font("Segoe UI", 10.5f)
+        };
+
+        var lblStatus = new Label
+        {
+            Left = 20,
+            Top = 105,
+            Width = 445,
+            Height = 25,
+            ForeColor = Color.FromArgb(241, 196, 15),
+            Text = "",
+            Font = new Font("Segoe UI", 9f)
         };
 
         var btnOk = new Button
         {
             Text = "Conectar",
-            Left = 240,
-            Width = 100,
-            Top = 115,
-            Height = 35,
-            DialogResult = DialogResult.OK,
+            Left = 250,
+            Width = 105,
+            Top = 145,
+            Height = 36,
             BackColor = Color.FromArgb(88, 101, 242),
             ForeColor = Color.White,
-            FlatStyle = FlatStyle.Flat
+            FlatStyle = FlatStyle.Flat,
+            Font = new Font("Segoe UI", 9.5f, FontStyle.Bold)
         };
 
         var btnCancel = new Button
         {
             Text = "Cancelar",
-            Left = 350,
-            Width = 90,
-            Top = 115,
-            Height = 35,
+            Left = 365,
+            Width = 100,
+            Top = 145,
+            Height = 36,
             DialogResult = DialogResult.Cancel,
             BackColor = Color.FromArgb(60, 60, 60),
             ForeColor = Color.White,
-            FlatStyle = FlatStyle.Flat
+            FlatStyle = FlatStyle.Flat,
+            Font = new Font("Segoe UI", 9.5f)
+        };
+
+        btnOk.Click += async (s, e) =>
+        {
+            var rawInput = textBox.Text.Trim();
+            if (string.IsNullOrWhiteSpace(rawInput)) return;
+
+            btnOk.Enabled = false;
+            btnCancel.Enabled = false;
+            textBox.Enabled = false;
+            lblStatus.Text = "Buscando sala y conectando...";
+
+            var resolvedUrl = await ResolveInputToUrlAsync(rawInput);
+            if (!string.IsNullOrEmpty(resolvedUrl) && Uri.TryCreate(resolvedUrl, UriKind.Absolute, out var uri))
+            {
+                _serverUrl = rawInput;
+                try
+                {
+                    File.WriteAllText(_configFile, _serverUrl);
+                }
+                catch { }
+
+                if (_webView.CoreWebView2 != null)
+                {
+                    _webView.Source = uri;
+                }
+                prompt.DialogResult = DialogResult.OK;
+                prompt.Close();
+            }
+            else
+            {
+                lblStatus.Text = "";
+                btnOk.Enabled = true;
+                btnCancel.Enabled = true;
+                textBox.Enabled = true;
+                MessageBox.Show(
+                    prompt,
+                    $"No se encontró ninguna sala activa para '{rawInput}'.\n\nSi es un código (ej: facu), asegúrate de que tu amigo haya abierto el servidor (iniciar_host.ps1) en su PC.\nO escribe el enlace web completo.",
+                    "Sala no encontrada",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning
+                );
+            }
         };
 
         prompt.Controls.Add(label);
         prompt.Controls.Add(textBox);
+        prompt.Controls.Add(lblStatus);
         prompt.Controls.Add(btnOk);
         prompt.Controls.Add(btnCancel);
         prompt.AcceptButton = btnOk;
         prompt.CancelButton = btnCancel;
 
-        if (prompt.ShowDialog(this) == DialogResult.OK && !string.IsNullOrWhiteSpace(textBox.Text))
-        {
-            _serverUrl = textBox.Text.Trim();
-            if (!_serverUrl.StartsWith("http://") && !_serverUrl.StartsWith("https://"))
-            {
-                _serverUrl = "http://" + _serverUrl;
-            }
-            try
-            {
-                File.WriteAllText(_configFile, _serverUrl);
-            }
-            catch { }
-
-            if (_webView.CoreWebView2 != null)
-            {
-                _webView.Source = new Uri(_serverUrl);
-            }
-        }
+        prompt.ShowDialog(this);
     }
 
     private void InstallGlobalKeyboardHook()

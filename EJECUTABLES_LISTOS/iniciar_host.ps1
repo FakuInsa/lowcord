@@ -45,13 +45,27 @@ while ($attempts -lt 25 -and -not $tunnelUrl) {
     $attempts++
 }
 
+# 4.5. Resolver código de sala (ej: facu) y publicar en el resolvedor P2P
+$codeFile = Join-Path $PSScriptRoot "room_code.txt"
+$roomCode = "facu"
+if (Test-Path $codeFile) {
+    $custom = (Get-Content $codeFile -Raw -ErrorAction SilentlyContinue).Trim().ToLower()
+    if ($custom) { $roomCode = $custom }
+} else {
+    Set-Content -Path $codeFile -Value "facu" -Encoding UTF8
+}
+
+if ($tunnelUrl) {
+    try {
+        $encodedUrl = [System.Uri]::EscapeDataString($tunnelUrl)
+        Invoke-RestMethod -Uri "https://api.keyval.org/set/lowcord_$roomCode/$encodedUrl" -TimeoutSec 5 -ErrorAction SilentlyContinue | Out-Null
+    } catch {}
+    Set-Clipboard -Value $tunnelUrl
+}
+
 # 5. Iniciar cliente nativo
 Write-Host " [3/3] Abriendo aplicacion Lowcord..." -ForegroundColor Yellow
 Start-Process -FilePath $clientExe -WorkingDirectory $PSScriptRoot
-
-if ($tunnelUrl) {
-    Set-Clipboard -Value $tunnelUrl
-}
 
 Clear-Host
 Write-Host "==========================================================================" -ForegroundColor Cyan
@@ -59,16 +73,18 @@ Write-Host "                 LOWCORD - SERVIDOR ACTIVO Y VISIBLE                
 Write-Host "==========================================================================" -ForegroundColor Cyan
 Write-Host ""
 if ($tunnelUrl) {
-    Write-Host "  ENLACE SEGURO PARA TUS AMIGOS (YA COPIADO AL PORTAPAPELES):" -ForegroundColor Green
+    Write-Host "  CÓDIGO DE TU SALA: " -NoNewline -ForegroundColor Green
+    Write-Host "  $roomCode  " -ForegroundColor Black -BackgroundColor Yellow
+    Write-Host "  (Tus amigos abren Lowcord y solo escriben este código para entrar!)" -ForegroundColor Gray
+    Write-Host ""
+    Write-Host "  ENLACE WEB DIRECTO (Navegador PC o Celular - Ya en portapapeles):" -ForegroundColor Cyan
     Write-Host "  >>>  $tunnelUrl  <<<" -ForegroundColor Yellow -BackgroundColor Black
     Write-Host ""
-    Write-Host "  Haz Ctrl + V en Discord o WhatsApp para enviarselo a tus amigos." -ForegroundColor White
 } else {
     Write-Host "  Servidor local listo en: http://localhost:8080" -ForegroundColor White
 }
-Write-Host ""
 Write-Host "  ESTADO: SERVIDOR ACTIVO (Consola abierta de forma transparente)." -ForegroundColor Green
-Write-Host "  Manten esta ventana abierta mientras quieras permitir nuevas conexiones." -ForegroundColor Gray
+Write-Host "  Manten esta ventana abierta mientras juegues con tus amigos." -ForegroundColor Gray
 Write-Host ""
 Write-Host "  OPCIONES DE CIERRE:" -ForegroundColor Cyan
 Write-Host "  • DETENER.bat      -> Cierra tu servidor pero deja a tus amigos en P2P." -ForegroundColor White
@@ -77,11 +93,19 @@ Write-Host "  • O presiona Ctrl + C en esta ventana para salir." -ForegroundCo
 Write-Host "==========================================================================" -ForegroundColor Cyan
 Write-Host ""
 
+$lastPublish = [System.Diagnostics.Stopwatch]::StartNew()
 try {
     while ($true) {
         if ($procServer.HasExited) {
             Write-Host "El servidor local se ha detenido." -ForegroundColor Red
             break
+        }
+        if ($tunnelUrl -and $lastPublish.Elapsed.TotalMinutes -ge 2) {
+            try {
+                $encodedUrl = [System.Uri]::EscapeDataString($tunnelUrl)
+                Invoke-RestMethod -Uri "https://api.keyval.org/set/lowcord_$roomCode/$encodedUrl" -TimeoutSec 5 -ErrorAction SilentlyContinue | Out-Null
+                $lastPublish.Restart()
+            } catch {}
         }
         Start-Sleep -Seconds 2
     }

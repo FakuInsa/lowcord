@@ -69,8 +69,10 @@ let isRecordingKeybind = false;
 
 let rawMicStream = null;
 let micSourceNode = null;
+let micHighPassFilter = null;
 let micGateGainNode = null;
 let outboundMicDestination = null;
+let signalrPingInterval = null;
 
 const peers = new Map();
 const hiddenScreens = new Set();
@@ -79,8 +81,11 @@ const screenVolumes = new Map(); // id -> volumen 0.0 - 1.0
 const rtcConfig = {
   iceServers: [
     { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' }
-  ]
+    { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'stun:stun2.l.google.com:19302' },
+    { urls: 'stun:stun.cloudflare.com:3478' }
+  ],
+  iceCandidatePoolSize: 10
 };
 
 // Elementos del DOM
@@ -143,26 +148,11 @@ const btnConfirmScreen = document.getElementById('btn-confirm-screen');
 let muteSoundsEnabled = localStorage.getItem('lowcord_mute_sounds') !== 'false';
 const chkMuteSound = document.getElementById('chk-mute-sound');
 
-// Miniatura flotante de vista previa y modal de diagnóstico
+// Miniatura flotante de vista previa (PiP local)
 const streamMiniPreview = document.getElementById('stream-mini-preview');
 const miniPreviewVideo = document.getElementById('mini-preview-video');
 const miniPreviewBadge = document.getElementById('mini-preview-badge');
 const btnCloseMiniPreview = document.getElementById('btn-close-mini-preview');
-const streamStatsModal = document.getElementById('stream-stats-modal');
-const btnCloseStreamStats = document.getElementById('btn-close-stream-stats');
-const statFps = document.getElementById('stat-fps');
-const statBitrate = document.getElementById('stat-bitrate');
-const statRtt = document.getElementById('stat-rtt');
-const statPackets = document.getElementById('stat-packets');
-const statPacketsHealth = document.getElementById('stat-packets-health');
-const statDiagnosisBox = document.getElementById('stat-diagnosis-box');
-const diagIcon = document.getElementById('diag-icon');
-const diagTitle = document.getElementById('diag-title');
-const diagDesc = document.getElementById('diag-desc');
-const btnQuick720p = document.getElementById('btn-quick-720p');
-const btnQuick1080p = document.getElementById('btn-quick-1080p');
-const btnDockStreamStats = document.getElementById('btn-dock-stream-stats');
-const dockStreamStatsText = document.getElementById('dock-stream-stats-text');
 
 iconMic.innerHTML = ICONS.micOn;
 iconScreen.innerHTML = ICONS.screen;
@@ -210,7 +200,7 @@ async function initLocalAudio() {
   const audioConstraints = {
     echoCancellation: noiseSuppressionEnabled,
     noiseSuppression: noiseSuppressionEnabled,
-    autoGainControl: noiseSuppressionEnabled
+    autoGainControl: false
   };
 
   if (currentInputDeviceId) {
@@ -225,7 +215,7 @@ async function initLocalAudio() {
   } catch (err) {
     console.warn('Fallo dispositivo guardado, usando predeterminado:', err);
     rawMicStream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: false },
       video: false
     });
   }
@@ -243,6 +233,17 @@ function setupLocalAudioProcessing() {
 
   micSourceNode = ctx.createMediaStreamSource(rawMicStream);
 
+  if (micHighPassFilter) {
+    try { micHighPassFilter.disconnect(); } catch(e){}
+  } else {
+    // Filtro Paso Alto (High-Pass) a 85 Hz:
+    // Elimina físicamente retumbes de escritorio, golpes de teclado, zumbidos eléctricos y viento
+    micHighPassFilter = ctx.createBiquadFilter();
+    micHighPassFilter.type = 'highpass';
+    micHighPassFilter.frequency.value = 85;
+    micHighPassFilter.Q.value = 0.7;
+  }
+
   if (!micGateGainNode) {
     micGateGainNode = ctx.createGain();
     outboundMicDestination = ctx.createMediaStreamDestination();
@@ -250,7 +251,9 @@ function setupLocalAudioProcessing() {
     localAudioStream = outboundMicDestination.stream;
   }
 
-  micSourceNode.connect(micGateGainNode);
+  // Cadena de Audio: Mic -> Filtro Paso Alto (85Hz) -> Puerta de Ruido (Gain) -> Salida WebRTC
+  micSourceNode.connect(micHighPassFilter);
+  micHighPassFilter.connect(micGateGainNode);
 
   if (isMicMuted) {
     micGateGainNode.gain.setValueAtTime(0, ctx.currentTime);
@@ -261,7 +264,8 @@ function setupLocalAudioProcessing() {
     isGateOpen = false;
   }
 
-  setupSpeakingDetection(rawMicStream, 'local-participant');
+  // Analizar la voz luego del filtro para que ruidos graves no abran la compuerta
+  setupSpeakingDetection(micHighPassFilter, 'local-participant');
 }
 
 // =========================================================
@@ -348,7 +352,7 @@ selectAudioInput.addEventListener('change', async () => {
         deviceId: { exact: newDeviceId },
         echoCancellation: noiseSuppressionEnabled,
         noiseSuppression: noiseSuppressionEnabled,
-        autoGainControl: noiseSuppressionEnabled
+        autoGainControl: false
       },
       video: false
     });
@@ -498,10 +502,25 @@ async function initSignalR() {
   });
 
   connection.on('UserLeft', (peerId) => {
-    closePeerConnection(peerId);
-    removeParticipantCard(peerId);
-    removeScreenCard(peerId);
-    updateUserCount();
+    const peer = peers.get(peerId);
+    // Si la conexión WebRTC de voz/video sigue activa y conectada directamente por P2P,
+    // no cerramos de golpe; damos 5s de gracia por si el usuario sólo sufrió un parpadeo de SignalR
+    if (peer && peer.pc && (peer.pc.iceConnectionState === 'connected' || peer.pc.connectionState === 'connected')) {
+      console.log(`[SignalR] UserLeft recibido para ${peerId}, pero WebRTC sigue activo. Esperando posible reconexión...`);
+      setTimeout(() => {
+        if (peers.has(peerId) && (!peer.pc || (peer.pc.connectionState !== 'connected' && peer.pc.iceConnectionState !== 'connected'))) {
+          closePeerConnection(peerId);
+          removeParticipantCard(peerId);
+          removeScreenCard(peerId);
+          updateUserCount();
+        }
+      }, 5000);
+    } else {
+      closePeerConnection(peerId);
+      removeParticipantCard(peerId);
+      removeScreenCard(peerId);
+      updateUserCount();
+    }
   });
 
   // Evento recibido cuando el anfitrión cierra la sala
@@ -519,10 +538,20 @@ async function initSignalR() {
     }
   });
 
-  connection.onreconnected(() => {
-    console.log('[SignalR] Reconectado exitosamente al servidor.');
+  connection.onreconnected(async (newConnectionId) => {
+    console.log('[SignalR] Reconectado exitosamente al servidor. ID:', newConnectionId);
+    myConnectionId = newConnectionId || connection.connectionId;
     const banner = document.getElementById('reconnect-banner');
     if (banner) banner.style.display = 'none';
+
+    // Resincronizar la sesión en el servidor con el nuevo connectionId
+    try {
+      const password = document.getElementById('room-password').value.trim();
+      await connection.invoke('JoinRoom', currentRoomId, password, myUserName);
+      console.log('[SignalR] Sala resincronizada con el servidor tras reconexión.');
+    } catch (err) {
+      console.error('[SignalR] Error al resincronizar sala tras reconexión:', err);
+    }
   });
 
   connection.onclose((error) => {
@@ -536,6 +565,18 @@ async function initSignalR() {
   });
 
   await connection.start();
+
+  // Heartbeat ping cada 10s: Evita que Cloudflare Tunnel y proxies NAT cierren WebSockets por silencio
+  if (signalrPingInterval) clearInterval(signalrPingInterval);
+  signalrPingInterval = setInterval(async () => {
+    if (connection && connection.state === signalR.HubConnectionState.Connected) {
+      try {
+        await connection.invoke('Ping');
+      } catch (e) {
+        // Ignorar fallos transitorios
+      }
+    }
+  }, 10000);
 }
 
 // =========================================================
@@ -599,9 +640,58 @@ async function createPeerConnection(peerId, peerUserName, isInitiator) {
     }
   };
 
+  let iceRecoveryTimeout = null;
+
+  const handleConnectionStateChange = async () => {
+    tryTriggerScreenOffer();
+
+    const iceState = pc.iceConnectionState;
+    const connState = pc.connectionState;
+
+    if (iceState === 'connected' || iceState === 'completed' || connState === 'connected') {
+      if (iceRecoveryTimeout) {
+        clearTimeout(iceRecoveryTimeout);
+        iceRecoveryTimeout = null;
+      }
+    } else if (iceState === 'failed' || connState === 'failed') {
+      console.warn(`[WebRTC] Conexión fallida con ${peerUserName} (ICE: ${iceState}, Conn: ${connState}). Reiniciando ICE...`);
+      if (pc.signalingState === 'stable') {
+        try {
+          const offer = await pc.createOffer({ iceRestart: true });
+          await pc.setLocalDescription(offer);
+          if (connection && connection.state === signalR.HubConnectionState.Connected) {
+            await connection.invoke('SendOffer', peerId, JSON.stringify(pc.localDescription));
+            console.log(`[WebRTC] Oferta iceRestart enviada exitosamente a ${peerUserName}`);
+          }
+        } catch (e) {
+          console.error(`[WebRTC] Error al reiniciar ICE con ${peerUserName}:`, e);
+        }
+      }
+    } else if (iceState === 'disconnected') {
+      // Si se desconecta momentáneamente por un corte o cambio de red, esperar 3s antes de reiniciar ICE
+      if (!iceRecoveryTimeout) {
+        iceRecoveryTimeout = setTimeout(async () => {
+          iceRecoveryTimeout = null;
+          if (peers.has(peerId) && pc.iceConnectionState === 'disconnected' && pc.signalingState === 'stable') {
+            console.warn(`[WebRTC] Enlace con ${peerUserName} continúa desconectado tras 3s. Forzando iceRestart...`);
+            try {
+              const offer = await pc.createOffer({ iceRestart: true });
+              await pc.setLocalDescription(offer);
+              if (connection && connection.state === signalR.HubConnectionState.Connected) {
+                await connection.invoke('SendOffer', peerId, JSON.stringify(pc.localDescription));
+              }
+            } catch (e) {
+              console.error(`[WebRTC] Error al forzar iceRestart tras timeout:`, e);
+            }
+          }
+        }, 3000);
+      }
+    }
+  };
+
   pc.onsignalingstatechange = tryTriggerScreenOffer;
-  pc.onconnectionstatechange = tryTriggerScreenOffer;
-  pc.oniceconnectionstatechange = tryTriggerScreenOffer;
+  pc.onconnectionstatechange = handleConnectionStateChange;
+  pc.oniceconnectionstatechange = handleConnectionStateChange;
 
   pc.onicecandidate = (event) => {
     if (event.candidate && connection) {
@@ -760,6 +850,11 @@ function closePeerConnection(peerId) {
 
 function terminateCallSession(reason) {
   console.warn('[Lowcord] Terminando sesión completa de llamada:', reason);
+
+  if (signalrPingInterval) {
+    clearInterval(signalrPingInterval);
+    signalrPingInterval = null;
+  }
 
   if (localSpeakingTimer) {
     clearInterval(localSpeakingTimer);
@@ -947,10 +1042,6 @@ async function startScreenShare() {
       await renegotiatePeer(peerId);
     }
 
-    // Iniciar monitor de telemetría WebRTC en tiempo real
-    startStreamTelemetry();
-    if (btnDockStreamStats) btnDockStreamStats.style.display = 'inline-flex';
-
     videoTrack.onended = () => stopScreenShare();
     if (connection) connection.invoke('UpdateMediaState', isMicMuted, true);
   } catch (err) {
@@ -965,11 +1056,7 @@ async function stopScreenShare() {
   iconScreen.innerHTML = ICONS.screen;
   labelScreen.innerText = 'Compartir';
 
-  // Detener telemetría y cerrar miniatura
-  stopStreamTelemetry();
   toggleMiniPreview(false);
-  closeStreamStats();
-  if (btnDockStreamStats) btnDockStreamStats.style.display = 'none';
 
   removeScreenCard('local');
   const localPill = document.getElementById('pill-local');
@@ -1012,13 +1099,8 @@ function renderLocalScreenPill() {
     <div class="pill-local-content">
       <span class="status-pulse-dot"></span>
       <span class="pill-screen-text">Tu Pantalla (<b id="pill-screen-resolution">${screenQuality.resolution}p @ ${screenQuality.fps} FPS</b>)</span>
-      <div class="pill-live-metrics" id="pill-live-metrics">
-        <span class="badge-fps" id="pill-fps-badge">-- FPS</span>
-        <span class="badge-bitrate" id="pill-bitrate-badge">-- Mbps</span>
-      </div>
       <div class="pill-actions">
         ${hasLocalCard ? '<button type="button" class="btn-pill-action" id="btn-restore-local-card">Mostrar</button>' : '<button type="button" class="btn-pill-action" id="btn-toggle-preview-pip" title="Ver miniatura de tu transmisión">Ver cómo se ve</button>'}
-        <button type="button" class="btn-pill-action btn-pill-stats" id="btn-open-stream-stats" title="Abrir diagnóstico de salud y métricas">Diagnóstico</button>
       </div>
     </div>
   `;
@@ -1036,14 +1118,6 @@ function renderLocalScreenPill() {
     btnPip.addEventListener('click', (e) => {
       e.stopPropagation();
       toggleMiniPreview();
-    });
-  }
-
-  const btnStats = pill.querySelector('#btn-open-stream-stats');
-  if (btnStats) {
-    btnStats.addEventListener('click', (e) => {
-      e.stopPropagation();
-      openStreamStats();
     });
   }
 
@@ -1082,206 +1156,6 @@ function toggleMiniPreview(forceState) {
   }
 }
 
-// Modal de diagnóstico de transmisión
-function openStreamStats() {
-  if (streamStatsModal) {
-    streamStatsModal.style.display = 'flex';
-    const targetEl = document.getElementById('stat-fps-target');
-    if (targetEl) targetEl.innerText = `Objetivo: ${screenQuality.fps} FPS`;
-  }
-}
-
-function closeStreamStats() {
-  if (streamStatsModal) {
-    streamStatsModal.style.display = 'none';
-  }
-}
-
-// Telemetría WebRTC en tiempo real para diagnosticar lag
-let streamStatsInterval = null;
-let lastBytesSent = 0;
-let lastStatsTime = 0;
-let lastFramesSent = 0;
-
-function startStreamTelemetry() {
-  stopStreamTelemetry();
-  lastBytesSent = 0;
-  lastStatsTime = performance.now();
-  lastFramesSent = 0;
-
-  streamStatsInterval = setInterval(async () => {
-    if (!isScreenSharing) {
-      updateLiveMetricsUI({ fps: 0, bitrateMbps: 0, rtt: 0, packetLoss: 0, reason: 'none', isAlone: false });
-      return;
-    }
-
-    // Si estás solo en la sala, medir los fotogramas del capturador de pantalla local
-    if (peers.size === 0) {
-      const vTrack = localScreenStream ? localScreenStream.getVideoTracks()[0] : null;
-      const settings = vTrack && vTrack.getSettings ? vTrack.getSettings() : {};
-      const captureFps = settings.frameRate ? Math.round(settings.frameRate) : screenQuality.fps;
-      updateLiveMetricsUI({
-        fps: captureFps,
-        bitrateMbps: 0,
-        rtt: 0,
-        packetLoss: 0,
-        reason: 'alone',
-        isAlone: true
-      });
-      return;
-    }
-
-    for (const [peerId, peer] of peers) {
-      if (!peer.screenSenders || peer.screenSenders.length === 0) continue;
-      const vSender = peer.screenSenders.find(s => s.track && s.track.kind === 'video');
-      if (!vSender) continue;
-
-      try {
-        const stats = await peer.pc.getStats();
-        let fps = 0;
-        let bitrateMbps = 0;
-        let rttMs = 0;
-        let packetLossPct = 0;
-        let reason = 'none';
-
-        const now = performance.now();
-        const timeDiffSec = (now - lastStatsTime) / 1000;
-
-        stats.forEach(report => {
-          if (report.type === 'outbound-rtp' && (report.kind === 'video' || report.mediaType === 'video')) {
-            if (report.framesPerSecond !== undefined) {
-              fps = Math.round(report.framesPerSecond);
-            } else if (report.framesSent !== undefined && timeDiffSec > 0 && lastFramesSent > 0) {
-              fps = Math.round((report.framesSent - lastFramesSent) / timeDiffSec);
-            }
-            if (report.framesSent !== undefined) {
-              lastFramesSent = report.framesSent;
-            }
-
-            if (report.bytesSent !== undefined && timeDiffSec > 0 && lastBytesSent > 0) {
-              const bits = (report.bytesSent - lastBytesSent) * 8;
-              bitrateMbps = parseFloat((bits / (timeDiffSec * 1000000)).toFixed(1));
-            }
-            if (report.bytesSent !== undefined) {
-              lastBytesSent = report.bytesSent;
-            }
-
-            if (report.qualityLimitationReason) {
-              reason = report.qualityLimitationReason;
-            }
-          }
-
-          if (report.type === 'remote-inbound-rtp' && (report.kind === 'video' || report.mediaType === 'video')) {
-            if (report.roundTripTime !== undefined) {
-              rttMs = Math.round(report.roundTripTime * 1000);
-            }
-            if (report.packetsLost !== undefined && report.packetsReceived !== undefined) {
-              const total = report.packetsLost + report.packetsReceived;
-              if (total > 0) {
-                packetLossPct = parseFloat(((report.packetsLost / total) * 100).toFixed(1));
-              }
-            }
-          }
-
-          if (report.type === 'candidate-pair' && report.state === 'succeeded' && report.currentRoundTripTime !== undefined) {
-            if (rttMs === 0) {
-              rttMs = Math.round(report.currentRoundTripTime * 1000);
-            }
-          }
-        });
-
-        lastStatsTime = now;
-        updateLiveMetricsUI({ fps, bitrateMbps, rtt: rttMs, packetLoss: packetLossPct, reason, isAlone: false });
-        break;
-      } catch(e) {}
-    }
-  }, 1000);
-}
-
-function stopStreamTelemetry() {
-  if (streamStatsInterval) {
-    clearInterval(streamStatsInterval);
-    streamStatsInterval = null;
-  }
-}
-
-function updateLiveMetricsUI({ fps, bitrateMbps, rtt, packetLoss, reason, isAlone }) {
-  const pillFpsBadge = document.getElementById('pill-fps-badge');
-  const pillBitrateBadge = document.getElementById('pill-bitrate-badge');
-
-  if (pillFpsBadge) {
-    pillFpsBadge.innerText = `${fps || 0} FPS`;
-    pillFpsBadge.classList.remove('warn', 'bad');
-    if (fps < 30 && isScreenSharing && !isAlone) {
-      pillFpsBadge.classList.add('bad');
-    } else if (fps < 50 && screenQuality.fps === 60 && !isAlone) {
-      pillFpsBadge.classList.add('warn');
-    }
-  }
-
-  if (pillBitrateBadge) {
-    pillBitrateBadge.innerText = isAlone ? 'Captura Lista' : `${bitrateMbps ? bitrateMbps.toFixed(1) : '0.0'} Mbps`;
-  }
-
-  // Actualizar botón de diagnóstico en el Dock inferior
-  if (dockStreamStatsText) {
-    dockStreamStatsText.innerText = `${fps || 0} FPS • Diagnóstico`;
-  }
-
-  // Actualizar insignias en la tarjeta grande de pantalla local (si la vista previa está visible)
-  const cardLocalFps = document.getElementById('card-local-fps');
-  if (cardLocalFps) {
-    cardLocalFps.innerText = `${fps || 0} FPS`;
-    cardLocalFps.classList.remove('warn', 'bad');
-  }
-  const cardLocalBitrate = document.getElementById('card-local-bitrate');
-  if (cardLocalBitrate) {
-    cardLocalBitrate.innerText = isAlone ? 'Captura Lista' : `${bitrateMbps ? bitrateMbps.toFixed(1) : '0.0'} Mbps`;
-  }
-
-  // Si el modal de estadísticas está abierto, actualizar detalles
-  if (statFps) statFps.innerText = `${fps || 0} FPS`;
-  if (statBitrate) statBitrate.innerText = isAlone ? 'P2P en espera' : `${bitrateMbps ? bitrateMbps.toFixed(1) : '0.0'} Mbps`;
-  if (statRtt) statRtt.innerText = isAlone ? 'Local (Solo en sala)' : (rtt > 0 ? `${rtt} ms` : 'Local');
-  if (statPackets) statPackets.innerText = `${packetLoss}%`;
-
-  if (statPacketsHealth) {
-    if (packetLoss > 2.0) {
-      statPacketsHealth.innerText = 'Pérdida alta';
-      statPacketsHealth.style.color = 'var(--red)';
-    } else {
-      statPacketsHealth.innerText = 'Óptimo';
-      statPacketsHealth.style.color = 'var(--green)';
-    }
-  }
-
-  if (statDiagnosisBox && diagTitle && diagDesc && diagIcon) {
-    statDiagnosisBox.classList.remove('diag-warning', 'diag-danger');
-    if (isAlone) {
-      diagIcon.innerText = '●';
-      diagTitle.innerText = `Captura local activa (${screenQuality.resolution}p @ ${fps} FPS)`;
-      diagDesc.innerText = 'Tu pantalla se está capturando con aceleración GPU. Como estás solo en la sala (1/4), la tasa de subida (Mbps) se medirá en vivo en cuanto se conecte un amigo para no consumir tu internet innecesariamente.';
-    } else if (reason === 'cpu') {
-      statDiagnosisBox.classList.add('diag-warning');
-      diagIcon.innerText = '▲';
-      diagTitle.innerText = 'Saturación de GPU/CPU por el juego';
-      diagDesc.innerText = 'Tu juego está consumiendo casi el 100% de la GPU. Limita los FPS del juego a 60 o 120 FPS en sus opciones de video, o baja la transmisión a 720p para que Windows no demore la captura.';
-    } else if (reason === 'bandwidth' || packetLoss > 2.0) {
-      statDiagnosisBox.classList.add('diag-danger');
-      diagIcon.innerText = '▲';
-      diagTitle.innerText = 'Conexión de subida saturada';
-      diagDesc.innerText = 'La velocidad de subida a internet no alcanza para la calidad actual. Haz clic en "Bajar a 720p 30 FPS" abajo para resolver los tirones.';
-    } else if (fps > 0) {
-      diagIcon.innerText = '●';
-      diagTitle.innerText = 'Transmisión fluida y sin demoras';
-      diagDesc.innerText = `Transmitiendo a ${fps} FPS reales con excelente tasa de bits. Tu amigo recibe la imagen sin cortes.`;
-    } else {
-      diagIcon.innerText = '●';
-      diagTitle.innerText = 'Transmisión lista';
-      diagDesc.innerText = 'Sincronizando video con los participantes...';
-    }
-  }
-}
 
 // Ajuste rápido de calidad en caliente (sin desconectar ni cortar llamada)
 async function applyStreamQualityLive(res, fps) {
@@ -1322,8 +1196,6 @@ async function applyStreamQualityLive(res, fps) {
   if (resLabel) resLabel.innerText = `${res}p @ ${fps} FPS`;
 
   if (miniPreviewBadge) miniPreviewBadge.innerText = `${res}p @ ${fps} FPS`;
-  const targetEl = document.getElementById('stat-fps-target');
-  if (targetEl) targetEl.innerText = `Objetivo: ${fps} FPS`;
 
   if (btnRes720 && btnRes1080 && btnFps30 && btnFps60) {
     btnRes720.classList.toggle('active', res === 720);
@@ -1480,15 +1352,19 @@ btnDisconnect.addEventListener('click', () => {
 let localSpeakingTimer = null;
 let lastLocalSpeakingState = false;
 
-function setupSpeakingDetection(stream, containerId) {
+function setupSpeakingDetection(streamOrNode, containerId) {
   try {
     const audioContext = getAudioContext();
     const analyser = audioContext.createAnalyser();
     analyser.fftSize = 256;
     analyser.smoothingTimeConstant = 0.4;
 
-    const source = audioContext.createMediaStreamSource(stream);
-    source.connect(analyser);
+    if (streamOrNode instanceof AudioNode) {
+      streamOrNode.connect(analyser);
+    } else {
+      const source = audioContext.createMediaStreamSource(streamOrNode);
+      source.connect(analyser);
+    }
     const buffer = new Uint8Array(analyser.frequencyBinCount);
 
     if (containerId === 'local-participant') {
@@ -1770,7 +1646,7 @@ async function reloadLocalAudio() {
     const audioConstraints = {
       echoCancellation: noiseSuppressionEnabled,
       noiseSuppression: noiseSuppressionEnabled,
-      autoGainControl: noiseSuppressionEnabled
+      autoGainControl: false
     };
     if (currentInputDeviceId) {
       audioConstraints.deviceId = { exact: currentInputDeviceId };
@@ -1862,20 +1738,11 @@ function addScreenCard(id, title, stream) {
       <div class="screen-card-header">
         ${ICONS.screen}
         <span>${title}</span>
-        ${isLocal ? `
-          <div class="card-live-metrics">
-            <span class="badge-fps" id="card-local-fps">-- FPS</span>
-            <span class="badge-bitrate" id="card-local-bitrate">-- Mbps</span>
-          </div>` : ''}
         ${!isLocal ? `<span class="screen-audio-badge">Audio en espera</span>` : ''}
       </div>
       <video autoplay playsinline muted></video>
       <div class="screen-card-actions">
         ${isLocal ? `
-        <button class="screen-action-btn btn-card-diag" id="btn-card-diag" title="Ver diagnóstico de transmisión y salud en tiempo real">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-7 14h-2v-4h2v4zm0-6h-2V7h2v4z"/></svg>
-          Diagnóstico
-        </button>
         <button class="screen-action-btn btn-gpu-saver" id="btn-gpu-saver" title="Ocultar la vista previa local para ahorrar GPU y eliminar el efecto espejo">
           Ahorrar GPU (Ocultar)
         </button>` : ''}
@@ -1894,13 +1761,6 @@ function addScreenCard(id, title, stream) {
     video.srcObject = stream;
 
     if (isLocal) {
-      const btnDiag = card.querySelector('#btn-card-diag');
-      if (btnDiag) {
-        btnDiag.addEventListener('click', (e) => {
-          e.stopPropagation();
-          openStreamStats();
-        });
-      }
       const btnGpu = card.querySelector('#btn-gpu-saver');
       if (btnGpu) {
         btnGpu.addEventListener('click', (e) => {
@@ -2052,8 +1912,8 @@ function updateUserCount() {
   userCount.innerText = 1 + peers.size;
 }
 
-// Inicializar eventos de telemetría, miniatura y sonidos
-function initTelemetryAndMiniPreviewUI() {
+// Inicializar eventos de miniatura PiP y sonidos
+function initMiniPreviewAndSoundsUI() {
   if (chkMuteSound) {
     chkMuteSound.checked = muteSoundsEnabled;
     chkMuteSound.addEventListener('change', (e) => {
@@ -2067,41 +1927,13 @@ function initTelemetryAndMiniPreviewUI() {
       toggleMiniPreview(false);
     });
   }
-
-  if (btnCloseStreamStats) {
-    btnCloseStreamStats.addEventListener('click', closeStreamStats);
-  }
-
-  if (streamStatsModal) {
-    streamStatsModal.addEventListener('click', (e) => {
-      if (e.target === streamStatsModal) {
-        closeStreamStats();
-      }
-    });
-  }
-
-  if (btnQuick720p) {
-    btnQuick720p.addEventListener('click', () => {
-      applyStreamQualityLive(720, 30);
-    });
-  }
-
-  if (btnQuick1080p) {
-    btnQuick1080p.addEventListener('click', () => {
-      applyStreamQualityLive(1080, 60);
-    });
-  }
-
-  if (btnDockStreamStats) {
-    btnDockStreamStats.addEventListener('click', openStreamStats);
-  }
 }
 
-// Inicializar configuración avanzada de audio, calidad de pantalla y telemetría al cargar la página
+// Inicializar configuración avanzada de audio, calidad de pantalla y componentes
 function initPageComponents() {
   initAdvancedAudioSettingsUI();
   initScreenQualityUI();
-  initTelemetryAndMiniPreviewUI();
+  initMiniPreviewAndSoundsUI();
 }
 
 if (document.readyState === 'loading') {

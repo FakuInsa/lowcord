@@ -37,6 +37,9 @@ builder.Services.AddSignalR(options =>
 {
     options.EnableDetailedErrors = true;
     options.MaximumReceiveMessageSize = 1024 * 1024; // 1 MB para SDPs complejos
+    options.KeepAliveInterval = TimeSpan.FromSeconds(5);
+    options.ClientTimeoutInterval = TimeSpan.FromSeconds(30);
+    options.HandshakeTimeout = TimeSpan.FromSeconds(15);
 });
 
 // 4. Configurar CORS

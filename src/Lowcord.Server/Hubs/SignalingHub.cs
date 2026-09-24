@@ -95,6 +95,14 @@ public class SignalingHub : Hub
     }
 
     /// <summary>
+    /// Ping ligero para mantener activo el túnel Cloudflare y la conexión SignalR en períodos de silencio
+    /// </summary>
+    public Task Ping()
+    {
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
     /// Intercambia los candidatos de red ICE para establecer el túnel P2P directo
     /// </summary>
     public async Task SendIceCandidate(string targetConnectionId, string candidate)
