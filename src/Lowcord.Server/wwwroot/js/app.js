@@ -524,25 +524,11 @@ async function initSignalR() {
   });
 
   connection.on('UserLeft', (peerId) => {
-    const peer = peers.get(peerId);
-    // Si la conexión WebRTC de voz/video sigue activa y conectada directamente por P2P,
-    // no cerramos de golpe; damos 5s de gracia por si el usuario sólo sufrió un parpadeo de SignalR
-    if (peer && peer.pc && (peer.pc.iceConnectionState === 'connected' || peer.pc.connectionState === 'connected')) {
-      console.log(`[SignalR] UserLeft recibido para ${peerId}, pero WebRTC sigue activo. Esperando posible reconexión...`);
-      setTimeout(() => {
-        if (peers.has(peerId) && (!peer.pc || (peer.pc.connectionState !== 'connected' && peer.pc.iceConnectionState !== 'connected'))) {
-          closePeerConnection(peerId);
-          removeParticipantCard(peerId);
-          removeScreenCard(peerId);
-          updateUserCount();
-        }
-      }, 5000);
-    } else {
-      closePeerConnection(peerId);
-      removeParticipantCard(peerId);
-      removeScreenCard(peerId);
-      updateUserCount();
-    }
+    console.log(`[SignalR] Participante desconectado: ${peerId}`);
+    closePeerConnection(peerId);
+    removeParticipantCard(peerId);
+    removeScreenCard(peerId);
+    updateUserCount();
   });
 
   // Evento recibido cuando el anfitrión cierra la sala
@@ -1363,8 +1349,53 @@ function setPttState(active) {
   }
 }
 
-btnDisconnect.addEventListener('click', () => {
-  if (confirm('¿Deseas salir de la llamada?')) window.location.reload();
+btnDisconnect.addEventListener('click', async () => {
+  if (!confirm('¿Deseas salir de la llamada?')) return;
+
+  // 1. Detener micrófono y pantalla local
+  if (localAudioStream) {
+    localAudioStream.getTracks().forEach(t => t.stop());
+  }
+  if (localScreenStream) {
+    localScreenStream.getTracks().forEach(t => t.stop());
+  }
+
+  // 2. Cerrar todas las conexiones peer WebRTC
+  peers.forEach((p, id) => closePeerConnection(id));
+  peers.clear();
+
+  // 3. Desconectar SignalR limpiamente
+  if (connection) {
+    try { await connection.stop(); } catch(e) {}
+  }
+
+  // 4. Si estamos en el cliente de escritorio (WebView2), volver al buscador global de salas
+  if (window.chrome && window.chrome.webview) {
+    window.chrome.webview.postMessage('CHANGE_SERVER');
+    return;
+  }
+
+  // 5. Si estamos en navegador web, volver al buscador global de GitHub Pages
+  try {
+    const url = new URL(window.location.href);
+    if (url.searchParams.has('room') || window.location.hostname.includes('trycloudflare.com')) {
+      window.location.href = 'https://fakuinsa.github.io/lowcord/';
+      return;
+    }
+  } catch (e) {}
+
+  window.location.reload();
+});
+
+window.addEventListener('beforeunload', () => {
+  try {
+    if (localAudioStream) {
+      localAudioStream.getTracks().forEach(t => t.stop());
+    }
+    if (connection && connection.state === signalR.HubConnectionState.Connected) {
+      connection.stop();
+    }
+  } catch (e) {}
 });
 
 // =========================================================
@@ -1692,6 +1723,15 @@ async function reloadLocalAudio() {
 // =========================================================
 function addParticipantCard(peerId, name, isMuted) {
   if (document.getElementById(`participant-${peerId}`)) return;
+
+  // Limpiar cualquier tarjeta residual previa con el mismo nombre si proviene de una reconexión
+  const existingCards = participantsGrid.querySelectorAll('.participant-card:not(.local-card)');
+  existingCards.forEach(c => {
+    const pName = c.querySelector('.participant-name');
+    if (pName && pName.textContent.trim().toLowerCase() === (name || '').trim().toLowerCase()) {
+      c.remove();
+    }
+  });
 
   const card = document.createElement('div');
   card.id = `participant-${peerId}`;
