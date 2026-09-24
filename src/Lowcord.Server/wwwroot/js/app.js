@@ -229,13 +229,34 @@ joinForm.addEventListener('submit', async (e) => {
 
 function applyMicTransmissionState() {
   const shouldTransmit = !isMicMuted && (inputMode === 'ptt' ? isPttActive : isGateOpen);
+
+  // 1. HARDWARE DEL MICRÓFONO (rawMicStream):
+  //    NUNCA debe deshabilitarse por la compuerta de voz (VAD), porque si se deshabilita,
+  //    el navegador deja de alimentar a AudioContext (manda ceros) y el detector de voz
+  //    queda completamente sordo para siempre.
+  //    Solo se deshabilita si el usuario hace clic expresamente en "Silenciar" (Mute) para privacidad total.
   if (rawMicStream) {
     rawMicStream.getAudioTracks().forEach(track => {
-      if (track.enabled !== shouldTransmit) {
-        track.enabled = shouldTransmit;
+      const hwEnabled = !isMicMuted;
+      if (track.enabled !== hwEnabled) {
+        track.enabled = hwEnabled;
       }
     });
   }
+
+  // 2. COMPUERTA DE AUDIO (micGateGainNode):
+  //    Abre o cierra el volumen hacia la llamada WebRTC de forma suave y sin chasquidos.
+  if (micGateGainNode) {
+    const ctx = getAudioContext();
+    const targetGain = shouldTransmit ? 1.0 : 0.0;
+    try {
+      micGateGainNode.gain.setTargetAtTime(targetGain, ctx.currentTime, 0.015);
+    } catch(e) {
+      micGateGainNode.gain.value = targetGain;
+    }
+  }
+
+  // 3. Pista de salida procesada hacia los peers WebRTC:
   if (localAudioStream && localAudioStream !== rawMicStream) {
     localAudioStream.getAudioTracks().forEach(track => {
       if (track.enabled !== shouldTransmit) {
@@ -377,9 +398,14 @@ async function setupLocalAudioProcessing() {
     try { rnnoiseNode.disconnect(); } catch(e){}
     rnnoiseNode = null;
   }
+  if (micGateGainNode) {
+    try { micGateGainNode.disconnect(); } catch(e){}
+  }
 
+  // 1. Nodo fuente desde el hardware del micrófono
   micSourceNode = ctx.createMediaStreamSource(rawMicStream);
 
+  // 2. Filtro Paso Alto a 110 Hz para análisis de voz (VAD y medidor)
   if (micHighPassFilter) {
     try { micHighPassFilter.disconnect(); } catch(e){}
   } else {
@@ -390,39 +416,46 @@ async function setupLocalAudioProcessing() {
     micHighPassFilter.frequency.value = 110;
     micHighPassFilter.Q.value = 0.8;
   }
-
-  // 1. Conectar a filtro paso alto exclusivamente para el analizador de voz (VAD y medidor)
   micSourceNode.connect(micHighPassFilter);
 
-  // 2. Si la supresión de ruido por IA (RNNoise) está activa:
+  // 3. Compuerta de audio (GainNode) y destino de transmisión para WebRTC
+  micGateGainNode = ctx.createGain();
+  micGateGainNode.gain.value = 1.0;
+
+  if (!outboundMicDestination) {
+    outboundMicDestination = ctx.createMediaStreamDestination();
+  }
+
+  // 4. Cadena de procesamiento saliente: micSourceNode -> [RNNoise] -> micGateGainNode -> outboundMicDestination
   if (rnnoiseEnabled) {
     try {
       if (!RNNoiseNode.ready) {
         await RNNoiseNode.register(ctx);
       }
       rnnoiseNode = new RNNoiseNode(ctx);
-      rnnoiseDestination = ctx.createMediaStreamDestination();
-
       micSourceNode.connect(rnnoiseNode);
-      rnnoiseNode.connect(rnnoiseDestination);
-
-      localAudioStream = rnnoiseDestination.stream;
+      rnnoiseNode.connect(micGateGainNode);
       console.log('[RNNoise] Supresión de ruido por IA activada en la transmisión.');
     } catch (err) {
       console.warn('[RNNoise] No se pudo activar la red neuronal, usando flujo directo:', err);
-      localAudioStream = rawMicStream;
+      micSourceNode.connect(micGateGainNode);
     }
   } else {
-    localAudioStream = rawMicStream;
+    micSourceNode.connect(micGateGainNode);
   }
+
+  micGateGainNode.connect(outboundMicDestination);
+
+  // El stream que se envía a las conexiones WebRTC es SIEMPRE el de salida procesada
+  localAudioStream = outboundMicDestination.stream;
 
   isGateOpen = true;
   applyMicTransmissionState();
 
-  // 3. Reemplazar la pista en todas las conexiones peer activas si ya estamos en llamada
+  // 5. Reemplazar la pista en todas las conexiones peer activas si ya estamos en llamada
   updateOutboundAudioTracks();
 
-  // 4. Analizar la voz luego del filtro para que ruidos graves no abran la compuerta
+  // 6. Analizar la voz luego del filtro para que ruidos graves no abran la compuerta
   setupSpeakingDetection(micHighPassFilter, 'local-participant');
 }
 
@@ -1484,11 +1517,19 @@ async function leaveVoiceChannel() {
     rawMicStream.getTracks().forEach(t => t.stop());
     rawMicStream = null;
   }
+  if (micSourceNode) {
+    try { micSourceNode.disconnect(); } catch(e){}
+    micSourceNode = null;
+  }
   if (rnnoiseNode) {
     try { rnnoiseNode.disconnect(); } catch(e){}
     rnnoiseNode = null;
   }
-  rnnoiseDestination = null;
+  if (micGateGainNode) {
+    try { micGateGainNode.disconnect(); } catch(e){}
+    micGateGainNode = null;
+  }
+  outboundMicDestination = null;
   localAudioStream = null;
 
   if (localScreenStream) {
