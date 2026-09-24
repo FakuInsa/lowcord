@@ -222,6 +222,32 @@ body {
   transform: scale(0.99);
 }
 
+.btn-secondary {
+  width: 100%;
+  background-color: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  color: var(--text-normal);
+  border-radius: 6px;
+  padding: 12px 14px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.btn-secondary:hover {
+  background-color: rgba(255, 255, 255, 0.1);
+  color: var(--text-header);
+}
+
+.btn-secondary:active {
+  transform: scale(0.99);
+}
+
 .modal-footer {
   margin-top: 24px;
 }

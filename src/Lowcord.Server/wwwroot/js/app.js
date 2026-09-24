@@ -218,11 +218,28 @@ joinForm.addEventListener('submit', async (e) => {
   }
 });
 
+function applyMicTransmissionState() {
+  const shouldTransmit = !isMicMuted && (inputMode === 'ptt' ? isPttActive : isGateOpen);
+  if (rawMicStream) {
+    rawMicStream.getAudioTracks().forEach(track => {
+      if (track.enabled !== shouldTransmit) {
+        track.enabled = shouldTransmit;
+      }
+    });
+  }
+}
+
 async function initLocalAudio() {
   const audioConstraints = {
-    echoCancellation: noiseSuppressionEnabled,
-    noiseSuppression: noiseSuppressionEnabled,
-    autoGainControl: false
+    echoCancellation: { ideal: true },
+    noiseSuppression: { ideal: true },
+    autoGainControl: { ideal: true },
+    googEchoCancellation: true,
+    googAutoGainControl: true,
+    googNoiseSuppression: true,
+    googHighpassFilter: true,
+    googTypingNoiseDetection: true,
+    googAudioMirroring: false
   };
 
   if (currentInputDeviceId) {
@@ -237,7 +254,14 @@ async function initLocalAudio() {
   } catch (err) {
     console.warn('Fallo dispositivo guardado, usando predeterminado:', err);
     rawMicStream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: false },
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+        googEchoCancellation: true,
+        googNoiseSuppression: true,
+        googTypingNoiseDetection: true
+      },
       video: false
     });
   }
@@ -247,6 +271,7 @@ async function initLocalAudio() {
 
 function setupLocalAudioProcessing() {
   if (!rawMicStream) return;
+  localAudioStream = rawMicStream;
   const ctx = getAudioContext();
 
   if (micSourceNode) {
@@ -258,33 +283,18 @@ function setupLocalAudioProcessing() {
   if (micHighPassFilter) {
     try { micHighPassFilter.disconnect(); } catch(e){}
   } else {
-    // Filtro Paso Alto (High-Pass) a 85 Hz:
-    // Elimina físicamente retumbes de escritorio, golpes de teclado, zumbidos eléctricos y viento
+    // Filtro Paso Alto a 110 Hz:
+    // Elimina físicamente retumbes de escritorio, golpes de teclado y viento para el análisis
     micHighPassFilter = ctx.createBiquadFilter();
     micHighPassFilter.type = 'highpass';
-    micHighPassFilter.frequency.value = 85;
-    micHighPassFilter.Q.value = 0.7;
+    micHighPassFilter.frequency.value = 110;
+    micHighPassFilter.Q.value = 0.8;
   }
 
-  if (!micGateGainNode) {
-    micGateGainNode = ctx.createGain();
-    outboundMicDestination = ctx.createMediaStreamDestination();
-    micGateGainNode.connect(outboundMicDestination);
-    localAudioStream = outboundMicDestination.stream;
-  }
-
-  // Cadena de Audio: Mic -> Filtro Paso Alto (85Hz) -> Puerta de Ruido (Gain) -> Salida WebRTC
+  // Conectar a filtro paso alto exclusivamente para el analizador de voz (VAD y medidor)
   micSourceNode.connect(micHighPassFilter);
-  micHighPassFilter.connect(micGateGainNode);
 
-  if (isMicMuted) {
-    micGateGainNode.gain.setValueAtTime(0, ctx.currentTime);
-  } else if (inputMode === 'ptt') {
-    micGateGainNode.gain.setValueAtTime(isPttActive ? 1.0 : 0.0, ctx.currentTime);
-  } else {
-    micGateGainNode.gain.setValueAtTime(0, ctx.currentTime);
-    isGateOpen = false;
-  }
+  applyMicTransmissionState();
 
   // Analizar la voz luego del filtro para que ruidos graves no abran la compuerta
   setupSpeakingDetection(micHighPassFilter, 'local-participant');
@@ -1287,22 +1297,15 @@ btnToggleMic.addEventListener('click', toggleMic);
 
 function toggleMic() {
   isMicMuted = !isMicMuted;
-  const ctx = getAudioContext();
 
   // Reproducir sonido suave de confirmación
   playAudioCue(isMicMuted ? 'mute' : 'unmute');
 
   if (isMicMuted) {
-    if (micGateGainNode) {
-      micGateGainNode.gain.setValueAtTime(0, ctx.currentTime);
-    }
     isGateOpen = false;
     isPttActive = false;
-  } else {
-    if (inputMode === 'ptt') {
-      if (micGateGainNode) micGateGainNode.gain.setValueAtTime(0, ctx.currentTime);
-    }
   }
+  applyMicTransmissionState();
 
   btnToggleMic.classList.toggle('muted', isMicMuted);
   iconMic.innerHTML = isMicMuted ? ICONS.micOff : ICONS.micOn;
@@ -1323,23 +1326,18 @@ function toggleMic() {
 
 function setPttState(active) {
   if (inputMode !== 'ptt' || isMicMuted) return;
-  const ctx = getAudioContext();
   if (active) {
     if (pttHangoverTimer) {
       clearTimeout(pttHangoverTimer);
       pttHangoverTimer = null;
     }
     isPttActive = true;
-    if (micGateGainNode) {
-      micGateGainNode.gain.setTargetAtTime(1.0, ctx.currentTime, 0.01);
-    }
+    applyMicTransmissionState();
   } else {
     if (pttHangoverTimer) clearTimeout(pttHangoverTimer);
     pttHangoverTimer = setTimeout(() => {
       isPttActive = false;
-      if (micGateGainNode) {
-        micGateGainNode.gain.setTargetAtTime(0.0, ctx.currentTime, 0.02);
-      }
+      applyMicTransmissionState();
       pttHangoverTimer = null;
     }, 150);
   }
@@ -1349,48 +1347,74 @@ function setPttState(active) {
   }
 }
 
-btnDisconnect.addEventListener('click', async () => {
-  if (!confirm('¿Deseas salir de la llamada?')) return;
-
+// Salir del canal de voz y regresar a la pantalla de Selección de Canales
+async function leaveVoiceChannel() {
   // 1. Detener micrófono y pantalla local
-  if (localAudioStream) {
-    localAudioStream.getTracks().forEach(t => t.stop());
+  if (rawMicStream) {
+    rawMicStream.getTracks().forEach(t => t.stop());
+    rawMicStream = null;
   }
+  localAudioStream = null;
+
   if (localScreenStream) {
     localScreenStream.getTracks().forEach(t => t.stop());
+    localScreenStream = null;
+    isScreenSharing = false;
   }
 
   // 2. Cerrar todas las conexiones peer WebRTC
   peers.forEach((p, id) => closePeerConnection(id));
   peers.clear();
 
-  // 3. Desconectar SignalR limpiamente
+  // 3. Desconectar SignalR para que el servidor notifique inmediatamente a todos
   if (connection) {
     try { await connection.stop(); } catch(e) {}
+    connection = null;
   }
 
-  // 4. Si estamos en el cliente de escritorio (WebView2), volver al buscador global de salas
-  if (window.chrome && window.chrome.webview) {
-    window.chrome.webview.postMessage('CHANGE_SERVER');
-    return;
+  // 4. Limpiar tarjetas remotas del DOM
+  const remoteCards = participantsGrid.querySelectorAll('.participant-card:not(.local-card)');
+  remoteCards.forEach(c => c.remove());
+  if (screenShareGrid) {
+    screenShareGrid.innerHTML = '';
+    screenShareGrid.style.display = 'none';
   }
+  stageContainer.classList.remove('has-screens', 'hide-participants');
 
-  // 5. Si estamos en navegador web, volver al buscador global de GitHub Pages
-  try {
-    const url = new URL(window.location.href);
-    if (url.searchParams.has('room') || window.location.hostname.includes('trycloudflare.com')) {
-      window.location.href = 'https://fakuinsa.github.io/lowcord/';
-      return;
-    }
-  } catch (e) {}
+  // 5. Ocultar la pantalla de llamada y volver a mostrar la Selección de Canales
+  appContainer.style.display = 'none';
+  joinModal.style.display = 'flex';
 
-  window.location.reload();
+  const btnSubmit = document.getElementById('btn-join');
+  if (btnSubmit) {
+    btnSubmit.disabled = false;
+    btnSubmit.innerText = 'Unirse al Canal';
+  }
+}
+
+// Botón "Salir" del dock en la llamada: vuelve a la selección de canales
+btnDisconnect.addEventListener('click', () => {
+  if (confirm('¿Deseas salir del canal de voz?')) {
+    leaveVoiceChannel();
+  }
 });
+
+// Botón "Desconectar del Servidor" en la selección de canales: sale del servidor completamente
+const btnDisconnectServer = document.getElementById('btn-disconnect-server');
+if (btnDisconnectServer) {
+  btnDisconnectServer.addEventListener('click', () => {
+    if (window.chrome && window.chrome.webview) {
+      window.chrome.webview.postMessage('CHANGE_SERVER');
+    } else {
+      window.location.href = 'https://fakuinsa.github.io/lowcord/';
+    }
+  });
+}
 
 window.addEventListener('beforeunload', () => {
   try {
-    if (localAudioStream) {
-      localAudioStream.getTracks().forEach(t => t.stop());
+    if (rawMicStream) {
+      rawMicStream.getTracks().forEach(t => t.stop());
     }
     if (connection && connection.state === signalR.HubConnectionState.Connected) {
       connection.stop();
@@ -1455,17 +1479,13 @@ function setupSpeakingDetection(streamOrNode, containerId) {
             }
             if (!isGateOpen) {
               isGateOpen = true;
-              if (micGateGainNode) {
-                micGateGainNode.gain.setTargetAtTime(1.0, audioContext.currentTime, 0.01);
-              }
+              applyMicTransmissionState();
             }
           } else {
             if (isGateOpen && !gateHangoverTimer) {
               gateHangoverTimer = setTimeout(() => {
                 isGateOpen = false;
-                if (micGateGainNode) {
-                  micGateGainNode.gain.setTargetAtTime(0.0, audioContext.currentTime, 0.02);
-                }
+                applyMicTransmissionState();
                 gateHangoverTimer = null;
               }, 250);
             }
@@ -1673,9 +1693,8 @@ function setInputMode(mode) {
   } else {
     keybindTitleLabel.innerText = 'Tecla para Pulsar para Hablar';
     keybindStatusHint.innerText = 'Mantén presionada esta tecla para hablar.';
-    if (micGateGainNode) {
-      micGateGainNode.gain.setValueAtTime(0, getAudioContext().currentTime);
-    }
+    isPttActive = false;
+    applyMicTransmissionState();
   }
 }
 
@@ -1697,9 +1716,14 @@ async function reloadLocalAudio() {
   if (!currentInputDeviceId && !rawMicStream) return;
   try {
     const audioConstraints = {
-      echoCancellation: noiseSuppressionEnabled,
-      noiseSuppression: noiseSuppressionEnabled,
-      autoGainControl: false
+      echoCancellation: { ideal: noiseSuppressionEnabled },
+      noiseSuppression: { ideal: noiseSuppressionEnabled },
+      autoGainControl: { ideal: true },
+      googEchoCancellation: noiseSuppressionEnabled,
+      googAutoGainControl: true,
+      googNoiseSuppression: noiseSuppressionEnabled,
+      googHighpassFilter: true,
+      googTypingNoiseDetection: noiseSuppressionEnabled
     };
     if (currentInputDeviceId) {
       audioConstraints.deviceId = { exact: currentInputDeviceId };
@@ -1713,6 +1737,18 @@ async function reloadLocalAudio() {
     }
     rawMicStream = newStream;
     setupLocalAudioProcessing();
+
+    // Reemplazar la pista en todas las conexiones peer activas
+    const newTrack = newStream.getAudioTracks()[0];
+    if (newTrack) {
+      peers.forEach(peer => {
+        const senders = peer.pc.getSenders();
+        const audioSender = senders.find(s => s.track && s.track.kind === 'audio' && !peer.screenSenders.includes(s));
+        if (audioSender) {
+          audioSender.replaceTrack(newTrack).catch(err => {});
+        }
+      });
+    }
   } catch(e) {
     console.warn('Error al recargar audio:', e);
   }

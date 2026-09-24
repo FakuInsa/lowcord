@@ -117,6 +117,11 @@ public class MainForm : Form
                         BeginInvoke(() => ShowConnectScreen());
                         return;
                     }
+                    if (msgString == "EXIT_APP")
+                    {
+                        BeginInvoke(() => Application.Exit());
+                        return;
+                    }
                     if (!string.IsNullOrEmpty(msgString) && msgString.StartsWith("CONNECT_ROOM:"))
                     {
                         var target = msgString.Substring("CONNECT_ROOM:".Length).Trim();
@@ -313,6 +318,14 @@ public class MainForm : Form
     .btn:hover {{
       background: #4752c4;
     }}
+    .btn-secondary {{
+      background: #35373c;
+      color: #dbdee1;
+    }}
+    .btn-secondary:hover {{
+      background: #4e5058;
+      color: #fff;
+    }}
   </style>
 </head>
 <body>
@@ -320,11 +333,14 @@ public class MainForm : Form
     <div class='logo'>
       <svg viewBox='0 0 24 24'><path d='M12 3a9 9 0 0 0-9 9v7a3 3 0 0 0 3 3h1a1 1 0 0 0 1-1v-6a1 1 0 0 0-1-1H5v-3a7 7 0 1 1 14 0v3h-2a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h1a3 3 0 0 0 3-3v-7a9 9 0 0 0-9-9z'/></svg>
     </div>
-    <h2>Unirse a una Sala</h2>
-    <p>Ingresa el nombre o código de sala que te compartió tu amigo (ej: charla12):</p>
+    <h2>Conectar a un Servidor</h2>
+    <p>Ingresa el nombre o código del servidor de tu amigo (ej: facu, squad5):</p>
     <form onsubmit='submitRoom(event)'>
-      <input type='text' id='roomInput' class='input-box' value='{currentVal}' placeholder='Nombre de sala (letras y números)' autocomplete='off' required autofocus>
-      <button type='submit' class='btn'>Conectar a la Sala</button>
+      <input type='text' id='roomInput' class='input-box' value='{currentVal}' placeholder='Nombre o código de servidor' autocomplete='off' required autofocus>
+      <div style='display: flex; gap: 10px;'>
+        <button type='button' class='btn btn-secondary' style='flex: 1;' onclick='window.chrome.webview.postMessage(""EXIT_APP"")'>Salir</button>
+        <button type='submit' class='btn' style='flex: 2;'>Conectar</button>
+      </div>
     </form>
   </div>
   <script>

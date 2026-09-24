@@ -33,20 +33,24 @@
         </div>
 
         <div class="input-group">
-          <label for="room-id">Nombre de la Sala</label>
-          <input type="text" id="room-id" placeholder="Nombre de sala (ej: charla12)" required maxlength="30" autocomplete="off">
+          <label for="room-id">Canal de Voz</label>
+          <input type="text" id="room-id" placeholder="general" value="general" required maxlength="30" autocomplete="off">
         </div>
 
         <div class="input-group">
-          <label for="room-password">Contraseña de Sala</label>
-          <input type="password" id="room-password" placeholder="Clave secreta para tus amigos" required autocomplete="off">
-          <small class="hint">Los participantes deben ingresar la misma contraseña.</small>
+          <label for="room-password">Contraseña del Canal</label>
+          <input type="password" id="room-password" placeholder="Clave secreta (opcional)" autocomplete="off">
+          <small class="hint">Los participantes en este canal deben ingresar la misma contraseña.</small>
         </div>
 
         <div id="join-error" class="error-banner" style="display: none;"></div>
 
         <button type="submit" id="btn-join" class="btn-primary">
-          <span>Unirse a la Llamada</span>
+          <span>Unirse al Canal</span>
+        </button>
+
+        <button type="button" id="btn-disconnect-server" class="btn-secondary" style="margin-top: 10px;">
+          <span>Desconectar del Servidor</span>
         </button>
 
         <div class="security-badge">
