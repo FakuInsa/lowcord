@@ -58,6 +58,12 @@ body {
   max-width: 500px;
 }
 
+.settings-body {
+  max-height: 70vh;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
 @keyframes fadeInModal {
   from { opacity: 0; transform: translateY(-16px) scale(0.97); }
   to { opacity: 1; transform: translateY(0) scale(1); }
@@ -1337,6 +1343,234 @@ body {
   pointer-events: none;
 }
 
+/* =========================================================
+   DISEÑO ADAPTABLE A DISPOSITIVOS MÓVILES (SMARTPHONES Y TABLETS)
+   ========================================================= */
 
+@media (max-width: 768px) {
+  /* Prevenir zoom automático molesto en iOS Safari al enfocar inputs */
+  .input-group input[type="text"],
+  .input-group input[type="password"],
+  .settings-select {
+    font-size: 16px;
+  }
 
+  /* Modales en móvil */
+  .modal-card {
+    width: 95%;
+    max-width: 95%;
+    padding: 22px 18px;
+    max-height: 92vh;
+  }
 
+  .settings-body {
+    max-height: 60vh;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    padding-right: 4px;
+  }
+
+  /* Barra Superior en Móvil */
+  .top-bar {
+    height: 48px;
+    padding: 0 12px;
+  }
+
+  .top-left {
+    gap: 6px;
+  }
+
+  .channel-name {
+    font-size: 14px;
+    max-width: 130px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .badge-e2ee {
+    display: none; /* Ahorra espacio en pantallas angostas */
+  }
+
+  .top-right {
+    gap: 8px;
+  }
+
+  .connection-status #status-text {
+    display: none; /* Mantener únicamente el punto verde de estado */
+  }
+
+  .user-counter {
+    font-size: 12px;
+  }
+
+  .top-pill-btn {
+    padding: 3px 8px;
+    font-size: 10px;
+  }
+
+  /* Escenario Principal */
+  .stage-container {
+    padding: 6px;
+    gap: 6px;
+  }
+
+  /* Cuadrícula de Participantes en Llamada (Estilo 2 columnas móvil) */
+  .participants-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 8px;
+    padding: 2px;
+  }
+
+  .participant-card {
+    min-height: 125px;
+    padding: 12px 6px;
+    border-radius: 10px;
+  }
+
+  .avatar-wrapper {
+    width: 52px;
+    height: 52px;
+    margin-bottom: 6px;
+  }
+
+  .avatar-initials {
+    font-size: 18px;
+  }
+
+  .participant-name {
+    font-size: 13px;
+    max-width: 95%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .participant-volume-box {
+    margin-top: 6px;
+    padding: 2px 6px;
+    gap: 4px;
+  }
+
+  .participant-vol-slider {
+    width: 48px;
+  }
+
+  .participant-vol-pct {
+    font-size: 9px;
+    min-width: 20px;
+  }
+
+  /* Tira de participantes cuando hay pantalla compartida */
+  .stage-container.has-screens .participants-grid {
+    height: 36px;
+    min-height: 36px;
+    gap: 6px;
+    padding: 0 4px;
+  }
+
+  .stage-container.has-screens .participant-card {
+    height: 30px;
+    min-height: 30px;
+    padding: 2px 8px;
+  }
+
+  /* Pantallas compartidas en móvil */
+  .screen-grid[data-screens="2"],
+  .screen-grid[data-screens="3"],
+  .screen-grid[data-screens="4"] {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto;
+  }
+
+  /* Botones de acción de pantalla siempre visibles en pantallas táctiles */
+  .screen-card-actions {
+    opacity: 1 !important;
+    top: 6px;
+    right: 6px;
+  }
+
+  .screen-action-btn {
+    padding: 6px 10px;
+    font-size: 12px;
+    min-height: 32px;
+  }
+
+  .screen-card-header {
+    top: 6px;
+    left: 6px;
+    padding: 3px 8px;
+    font-size: 11px;
+  }
+
+  /* Miniatura flotante de transmisión en móvil */
+  .mini-preview-card {
+    width: 140px;
+    right: 8px;
+    bottom: 72px;
+  }
+
+  /* Barra de Control Inferior (Dock) en Móvil */
+  .bottom-dock {
+    height: 64px;
+    padding: 0 12px;
+    justify-content: space-between;
+  }
+
+  /* Ocultar texto informativo del dock derecho para liberar ancho */
+  .dock-right {
+    display: none !important;
+  }
+
+  .dock-left {
+    min-width: auto;
+    gap: 8px;
+  }
+
+  /* Ocultar nombre y texto "Voz conectada" en la barra inferior móvil */
+  .dock-text {
+    display: none;
+  }
+
+  .dock-avatar {
+    width: 34px;
+    height: 34px;
+    font-size: 12px;
+  }
+
+  .dock-action-btn {
+    padding: 8px;
+  }
+
+  /* Botones de control circulares táctiles (Estilo App Nativa / Discord Mobile) */
+  .dock-controls {
+    flex: 1;
+    justify-content: flex-end;
+    gap: 10px;
+  }
+
+  .dock-controls .btn-label {
+    display: none;
+  }
+
+  .dock-controls .control-btn {
+    width: 44px;
+    height: 44px;
+    min-width: 44px;
+    min-height: 44px;
+    border-radius: 50%;
+    padding: 0;
+    justify-content: center;
+  }
+
+  .dock-controls .control-btn:active {
+    transform: scale(0.92);
+  }
+}
+
+/* Pantallas táctiles sin hover (tablets y celulares de cualquier tamaño) */
+@media (hover: none) {
+  .screen-card-actions {
+    opacity: 1;
+  }
+}

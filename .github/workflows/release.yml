@@ -36,7 +36,6 @@ jobs:
           Copy-Item -Path "EJECUTABLES_LISTOS/INICIAR.bat" -Destination "release_package/INICIAR.bat" -Force
           Copy-Item -Path "EJECUTABLES_LISTOS/INICIAR-SERVIDOR.bat" -Destination "release_package/INICIAR-SERVIDOR.bat" -Force
           Copy-Item -Path "EJECUTABLES_LISTOS/DETENER.bat" -Destination "release_package/DETENER.bat" -Force
-          Copy-Item -Path "EJECUTABLES_LISTOS/DETENER-TODO.bat" -Destination "release_package/DETENER-TODO.bat" -Force
           Copy-Item -Path "EJECUTABLES_LISTOS/Entrar-Por-Navegador.html" -Destination "release_package/Entrar-Por-Navegador.html" -Force
           Copy-Item -Path "EJECUTABLES_LISTOS/iniciar_host.ps1" -Destination "release_package/iniciar_host.ps1" -Force
           Copy-Item -Path "EJECUTABLES_LISTOS/room_code.txt.example" -Destination "release_package/room_code.txt.example" -Force

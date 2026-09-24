@@ -34,6 +34,8 @@ $inputRoom = ($inputRoom -replace '[^a-zA-Z0-9_-]', '').Trim().ToLower()
 
 $roomCode = if ($inputRoom) { $inputRoom } else { $suggested }
 Set-Content -Path $codeFile -Value $roomCode -Encoding UTF8
+$serverTxt = Join-Path $PSScriptRoot "server.txt"
+Set-Content -Path $serverTxt -Value $roomCode -Encoding UTF8
 
 Write-Host "  -> Sala activa fijada en: $roomCode" -ForegroundColor Cyan
 Write-Host ""
@@ -118,8 +120,7 @@ if ($NoClient) {
 Write-Host "  Manten esta ventana abierta mientras juegues con tus amigos." -ForegroundColor Gray
 Write-Host ""
 Write-Host "  OPCIONES DE CIERRE:" -ForegroundColor Cyan
-Write-Host "  - DETENER.bat      -> Cierra tu servidor pero deja a tus amigos en P2P." -ForegroundColor White
-Write-Host "  - DETENER-TODO.bat -> Cierra la sala completa y desconecta a todos." -ForegroundColor White
+Write-Host "  - DETENER.bat -> Detiene el servidor y cierra la sesion." -ForegroundColor White
 Write-Host "  - O presiona Ctrl + C en esta ventana para salir." -ForegroundColor DarkGray
 Write-Host "==========================================================================" -ForegroundColor Cyan
 Write-Host ""

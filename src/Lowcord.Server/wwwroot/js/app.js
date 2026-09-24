@@ -163,6 +163,23 @@ btnToggleAvatars.addEventListener('click', () => {
   btnToggleAvatars.innerText = isHidden ? 'Mostrar participantes' : 'Ocultar participantes';
 });
 
+// Pre-cargar valores de sala y usuario desde URL y localStorage
+(function prefillInputs() {
+  try {
+    const urlParams = new URLSearchParams(window.location.search);
+    const roomParam = (urlParams.get('room') || localStorage.getItem('lowcord_room_id') || '').trim().toLowerCase();
+    if (roomParam) {
+      const roomInput = document.getElementById('room-id');
+      if (roomInput) roomInput.value = roomParam;
+    }
+    const savedUser = localStorage.getItem('lowcord_username');
+    if (savedUser) {
+      const userInput = document.getElementById('username');
+      if (userInput && !userInput.value) userInput.value = savedUser;
+    }
+  } catch (e) {}
+})();
+
 // =========================================================
 // 1. INICIALIZACIÓN Y EVENTOS DE FORMULARIO
 // =========================================================
@@ -176,6 +193,11 @@ joinForm.addEventListener('submit', async (e) => {
   myUserName = document.getElementById('username').value.trim();
   currentRoomId = document.getElementById('room-id').value.trim().toLowerCase();
   const password = document.getElementById('room-password').value.trim();
+
+  try {
+    localStorage.setItem('lowcord_username', myUserName);
+    localStorage.setItem('lowcord_room_id', currentRoomId);
+  } catch (e) {}
 
   const btnSubmit = document.getElementById('btn-join');
   btnSubmit.disabled = true;

@@ -346,17 +346,53 @@ public class MainForm : Form
         _webView.NavigateToString(html);
     }
 
+    private string? GetLocalRoomCode()
+    {
+        try
+        {
+            var paths = new[]
+            {
+                Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "room_code.txt"),
+                Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "room_code.txt"),
+                Path.Combine(Environment.CurrentDirectory, "room_code.txt"),
+                Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "..", "..", "EJECUTABLES_LISTOS", "room_code.txt")
+            };
+            foreach (var p in paths)
+            {
+                if (File.Exists(p))
+                {
+                    var txt = File.ReadAllText(p).Trim();
+                    if (!string.IsNullOrEmpty(txt)) return txt.ToLowerInvariant();
+                }
+            }
+        }
+        catch { }
+        return null;
+    }
+
+    private bool IsTargetMatchingLocalHost(string target)
+    {
+        if (string.IsNullOrWhiteSpace(target) || target.Contains("localhost") || target.StartsWith("127.0.0.1"))
+            return true;
+
+        var localRoom = GetLocalRoomCode();
+        if (!string.IsNullOrEmpty(localRoom) && string.Equals(target.Trim(), localRoom, StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        return false;
+    }
+
     private async Task NavigateToServerAsync()
     {
-        // 1. Si el servidor local está activo en esta máquina, es el anfitrión
-        if (await IsLocalServerRunningAsync())
+        // 1. Si el servidor local está activo Y el objetivo coincide con la sala local (o no hay sala configurada)
+        if (await IsLocalServerRunningAsync() && IsTargetMatchingLocalHost(_serverUrl))
         {
             StopAutoRetry();
             _webView.Source = new Uri("http://localhost:8080");
             return;
         }
 
-        // 2. Si no es el anfitrión y no hay sala especificada o es localhost
+        // 2. Si no es el anfitrión (o apunta a otra sala) y no hay sala configurada en memoria
         if (string.IsNullOrWhiteSpace(_serverUrl) || _serverUrl.Contains("localhost"))
         {
             if (File.Exists(_configFile))
@@ -369,12 +405,22 @@ public class MainForm : Form
             }
         }
 
+        // Si todavía no hay sala especificada
         if (string.IsNullOrWhiteSpace(_serverUrl) || _serverUrl.Contains("localhost"))
         {
             ShowConnectScreen();
             return;
         }
 
+        // Si el objetivo es la sala local y el servidor local está corriendo
+        if (await IsLocalServerRunningAsync() && IsTargetMatchingLocalHost(_serverUrl))
+        {
+            StopAutoRetry();
+            _webView.Source = new Uri("http://localhost:8080");
+            return;
+        }
+
+        // De lo contrario, buscar sala remota
         var resolved = await ResolveInputToUrlAsync(_serverUrl);
         if (!string.IsNullOrEmpty(resolved) && Uri.TryCreate(resolved, UriKind.Absolute, out var uri))
         {
@@ -528,7 +574,7 @@ public class MainForm : Form
         _retryTimer = new System.Windows.Forms.Timer { Interval = 3000 };
         _retryTimer.Tick += async (s, e) =>
         {
-            if (await IsLocalServerRunningAsync())
+            if (await IsLocalServerRunningAsync() && IsTargetMatchingLocalHost(_serverUrl))
             {
                 StopAutoRetry();
                 _webView.Source = new Uri("http://localhost:8080");
