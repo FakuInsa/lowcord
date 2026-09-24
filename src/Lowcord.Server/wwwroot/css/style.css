@@ -55,13 +55,42 @@ body {
 }
 
 .settings-card {
-  max-width: 500px;
+  max-width: 560px;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  padding: 24px 28px 20px 28px;
+}
+
+.settings-card .modal-header {
+  margin-bottom: 16px;
+  flex-shrink: 0;
 }
 
 .settings-body {
-  max-height: 70vh;
+  max-height: 58vh;
   overflow-y: auto;
-  padding-right: 4px;
+  padding-right: 6px;
+  padding-top: 4px;
+}
+
+.settings-body::-webkit-scrollbar {
+  width: 6px;
+}
+.settings-body::-webkit-scrollbar-track {
+  background: transparent;
+}
+.settings-body::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 3px;
+}
+.settings-body::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+.settings-card .modal-footer {
+  margin-top: 16px;
+  flex-shrink: 0;
 }
 
 @keyframes fadeInModal {

@@ -270,7 +270,7 @@ function applyMicTransmissionState() {
 // RNNOISE: SUPRESIÓN DE RUIDO POR IA (RED NEURONAL GRU / WASM)
 // =========================================================
 class RNNoiseNode extends AudioWorkletNode {
-  static module = null;
+  static wasmBinary = null;
   static ready = false;
   static registeringPromise = null;
 
@@ -283,23 +283,13 @@ class RNNoiseNode extends AudioWorkletNode {
         const wasmUrl = '/js/rnnoise/rnnoise.wasm';
         const workletUrl = '/js/rnnoise/rnnoise.worklet.js';
 
-        let wasmModule;
-        if (typeof WebAssembly.compileStreaming === 'function') {
-          try {
-            wasmModule = await WebAssembly.compileStreaming(fetch(wasmUrl));
-          } catch (e) {
-            const resp = await fetch(wasmUrl);
-            const buffer = await resp.arrayBuffer();
-            wasmModule = await WebAssembly.compile(buffer);
-          }
-        } else {
-          const resp = await fetch(wasmUrl);
-          const buffer = await resp.arrayBuffer();
-          wasmModule = await WebAssembly.compile(buffer);
-        }
+        // 1. Cargar el binario WASM en memoria
+        const resp = await fetch(wasmUrl);
+        const buffer = await resp.arrayBuffer();
+        RNNoiseNode.wasmBinary = buffer;
 
+        // 2. Cargar el AudioWorkletProcessor de RNNoise
         await audioContext.audioWorklet.addModule(workletUrl);
-        RNNoiseNode.module = wasmModule;
         RNNoiseNode.ready = true;
         console.log('[RNNoise] Módulo neuronal WebAssembly AudioWorklet cargado con éxito.');
       } catch (err) {
@@ -314,18 +304,27 @@ class RNNoiseNode extends AudioWorkletNode {
   }
 
   constructor(audioContext) {
-    if (!RNNoiseNode.ready || !RNNoiseNode.module) {
+    if (!RNNoiseNode.ready || !RNNoiseNode.wasmBinary) {
       throw new Error("RNNoiseNode no está listo. Llama a RNNoiseNode.register(audioContext) primero.");
     }
-    super(audioContext, "rnnoise", {
+    super(audioContext, "@sapphi-red/web-noise-suppressor/rnnoise", {
       channelCountMode: "explicit",
       channelCount: 1,
       channelInterpretation: "speakers",
       numberOfInputs: 1,
       numberOfOutputs: 1,
       outputChannelCount: [1],
-      processorOptions: { module: RNNoiseNode.module }
+      processorOptions: {
+        maxChannels: 1,
+        wasmBinary: RNNoiseNode.wasmBinary.slice(0)
+      }
     });
+  }
+
+  destroy() {
+    try {
+      this.port.postMessage("destroy");
+    } catch(e){}
   }
 }
 
@@ -455,8 +454,10 @@ async function setupLocalAudioProcessing() {
   // 5. Reemplazar la pista en todas las conexiones peer activas si ya estamos en llamada
   updateOutboundAudioTracks();
 
-  // 6. Analizar la voz luego del filtro para que ruidos graves no abran la compuerta
-  setupSpeakingDetection(micHighPassFilter, 'local-participant');
+  // 6. Analizar la voz: Si RNNoise está activo, analizamos el nodo ya filtrado
+  // para que ruidos de fondo, teclados o golpes no enciendan la detección de voz
+  const nodeToAnalyze = (rnnoiseEnabled && rnnoiseNode) ? rnnoiseNode : micHighPassFilter;
+  setupSpeakingDetection(nodeToAnalyze, 'local-participant');
 }
 
 // =========================================================
@@ -465,6 +466,8 @@ async function setupLocalAudioProcessing() {
 btnOpenSettings.addEventListener('click', () => {
   loadAudioDevices();
   settingsModal.style.display = 'flex';
+  const sBody = document.querySelector('.settings-body');
+  if (sBody) sBody.scrollTop = 0;
 });
 
 btnCloseSettings.addEventListener('click', () => {
