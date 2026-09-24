@@ -16,6 +16,7 @@ EJECUTABLES_LISTOS/Servidor/
 *.lib
 *.so
 *.dylib
+*.zip
 
 # Archivos de cache de WebView2 / Chromium
 *.WebView2/

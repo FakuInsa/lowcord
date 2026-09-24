@@ -1,0 +1,58 @@
+name: Compilar y Publicar Releases
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Descargar codigo
+        uses: actions/checkout@v4
+
+      - name: Instalar .NET 9 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Compilar Servidor
+        run: |
+          dotnet publish src/Lowcord.Server/Lowcord.Server.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o release_package/Servidor
+          Copy-Item -Path "src/Lowcord.Server/wwwroot" -Destination "release_package/Servidor/wwwroot" -Recurse -Force
+
+      - name: Compilar Cliente
+        run: |
+          dotnet publish src/Lowcord.Client/Lowcord.Client.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o release_package
+
+      - name: Empaquetar archivos portables
+        run: |
+          Copy-Item -Path "EJECUTABLES_LISTOS/INICIAR.bat" -Destination "release_package/INICIAR.bat" -Force
+          Copy-Item -Path "EJECUTABLES_LISTOS/INICIAR-SERVIDOR.bat" -Destination "release_package/INICIAR-SERVIDOR.bat" -Force
+          Copy-Item -Path "EJECUTABLES_LISTOS/DETENER.bat" -Destination "release_package/DETENER.bat" -Force
+          Copy-Item -Path "EJECUTABLES_LISTOS/DETENER-TODO.bat" -Destination "release_package/DETENER-TODO.bat" -Force
+          Copy-Item -Path "EJECUTABLES_LISTOS/Entrar-Por-Navegador.html" -Destination "release_package/Entrar-Por-Navegador.html" -Force
+          Copy-Item -Path "EJECUTABLES_LISTOS/iniciar_host.ps1" -Destination "release_package/iniciar_host.ps1" -Force
+          Copy-Item -Path "EJECUTABLES_LISTOS/room_code.txt.example" -Destination "release_package/room_code.txt.example" -Force
+          
+          # Paquete solo cliente para amigos
+          New-Item -ItemType Directory -Path "client_only" -Force
+          Copy-Item -Path "release_package/Lowcord.Client.exe" -Destination "client_only/Lowcord-Client.exe" -Force
+          Compress-Archive -Path "client_only/*" -DestinationPath "Lowcord-Client-Windows-x64.zip" -Force
+          
+          # Paquete completo para anfitrion
+          Compress-Archive -Path "release_package/*" -DestinationPath "Lowcord-Host-Completo-Windows-x64.zip" -Force
+
+      - name: Publicar Release en GitHub
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: |
+            Lowcord-Client-Windows-x64.zip
+            Lowcord-Host-Completo-Windows-x64.zip
