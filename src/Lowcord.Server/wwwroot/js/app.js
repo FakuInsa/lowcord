@@ -60,10 +60,11 @@ let activeKeybind = {
 let noiseSuppressionEnabled = localStorage.getItem('lowcord_noise_suppression') !== 'false';
 let rnnoiseEnabled = localStorage.getItem('lowcord_rnnoise_enabled') !== 'false';
 
-// Configuración de pantalla compartida (resolución, FPS y ahorro de GPU)
+// Configuración de pantalla compartida (resolución, FPS, bitrate y ahorro de GPU)
 let screenQuality = {
-  resolution: parseInt(localStorage.getItem('lowcord_screen_res') || '1080', 10),
-  fps: parseInt(localStorage.getItem('lowcord_screen_fps') || '60', 10),
+  resolution: parseInt(localStorage.getItem('lowcord_screen_res') || '720', 10),
+  fps: parseInt(localStorage.getItem('lowcord_screen_fps') || '30', 10),
+  bitrateLevel: localStorage.getItem('lowcord_screen_bitrate') || 'medium', // 'low', 'medium', 'high'
   localPreview: localStorage.getItem('lowcord_screen_preview') === 'true' // false por defecto para máximo ahorro de GPU
 };
 let hardwareAccelerationEnabled = localStorage.getItem('lowcord_hardware_accel') !== 'false'; // Aceleración por Hardware (H.264 / GPU)
@@ -150,6 +151,9 @@ const btnRes720 = document.getElementById('btn-res-720');
 const btnRes1080 = document.getElementById('btn-res-1080');
 const btnFps30 = document.getElementById('btn-fps-30');
 const btnFps60 = document.getElementById('btn-fps-60');
+const btnBitrateLow = document.getElementById('btn-bitrate-low');
+const btnBitrateMed = document.getElementById('btn-bitrate-med');
+const btnBitrateHigh = document.getElementById('btn-bitrate-high');
 const chkLocalPreview = document.getElementById('chk-local-preview');
 const btnCancelScreen = document.getElementById('btn-cancel-screen');
 const btnConfirmScreen = document.getElementById('btn-confirm-screen');
@@ -869,6 +873,7 @@ async function createPeerConnection(peerId, peerUserName, isInitiator) {
     const vTrack = localScreenStream.getVideoTracks()[0];
     const aTrack = localScreenStream.getAudioTracks()[0];
     if (vTrack) {
+      try { vTrack.contentHint = 'motion'; } catch(e) {}
       const sender = pc.addTrack(vTrack, localScreenStream);
       configureHighQualityVideoSender(sender);
       peerData.screenSenders.push(sender);
@@ -960,6 +965,7 @@ async function createPeerConnection(peerId, peerUserName, isInitiator) {
     console.log(`[WebRTC] Pista recibida de ${peerUserName}: kind=${track.kind}, id=${track.id}`);
 
     if (track.kind === 'video') {
+      try { track.contentHint = 'motion'; } catch(e) {}
       applyHardwareAccelerationCodecPreferences(pc);
       const stream = event.streams[0] || new MediaStream([track]);
       addScreenCard(peerId, peerUserName, stream);
@@ -988,7 +994,34 @@ async function createPeerConnection(peerId, peerUserName, isInitiator) {
   return pc;
 }
 
-// Configurar codificador WebRTC dinámicamente según la calidad seleccionada
+// Obtener bitrate óptimo en bits/segundo según resolución, FPS y nivel deseado (Low, Medium, High)
+function getScreenBitrate(res = screenQuality.resolution, fps = screenQuality.fps, level = screenQuality.bitrateLevel) {
+  const table = {
+    low: {
+      '720_30': 900000,    // 900 Kbps - Ideal para jugar online sin subir el ping
+      '720_60': 1400000,   // 1.4 Mbps
+      '1080_30': 1600000,  // 1.6 Mbps
+      '1080_60': 2200000   // 2.2 Mbps
+    },
+    medium: {
+      '720_30': 1500000,   // 1.5 Mbps - Discord Standard (Balance óptimo)
+      '720_60': 2200000,   // 2.2 Mbps
+      '1080_30': 2500000,  // 2.5 Mbps
+      '1080_60': 3500000   // 3.5 Mbps
+    },
+    high: {
+      '720_30': 2500000,   // 2.5 Mbps - Máxima nitidez
+      '720_60': 4000000,   // 4.0 Mbps
+      '1080_30': 4500000,  // 4.5 Mbps
+      '1080_60': 6000000   // 6.0 Mbps
+    }
+  };
+  const key = `${res}_${fps}`;
+  const tier = table[level] || table.medium;
+  return tier[key] || 1500000;
+}
+
+// Configurar codificador WebRTC dinámicamente según la calidad y bitrate seleccionados
 function configureHighQualityVideoSender(sender) {
   try {
     const params = sender.getParameters();
@@ -996,16 +1029,7 @@ function configureHighQualityVideoSender(sender) {
       params.encodings = [{}];
     }
 
-    let bitrate = 6000000;
-    if (screenQuality.resolution === 720 && screenQuality.fps === 30) {
-      bitrate = 1500000; // 1.5 Mbps (Ultra Ahorro)
-    } else if (screenQuality.resolution === 720 && screenQuality.fps === 60) {
-      bitrate = 3000000; // 3.0 Mbps (720p 60 FPS)
-    } else if (screenQuality.resolution === 1080 && screenQuality.fps === 30) {
-      bitrate = 3500000; // 3.5 Mbps (1080p 30 FPS)
-    } else {
-      bitrate = 6000000; // 6.0 Mbps (1080p 60 FPS)
-    }
+    const bitrate = getScreenBitrate(screenQuality.resolution, screenQuality.fps, screenQuality.bitrateLevel);
 
     params.encodings[0].maxBitrate = bitrate;
     params.encodings[0].maxFramerate = screenQuality.fps;
@@ -1192,6 +1216,11 @@ function initScreenQualityUI() {
   btnRes1080.classList.toggle('active', screenQuality.resolution === 1080);
   btnFps30.classList.toggle('active', screenQuality.fps === 30);
   btnFps60.classList.toggle('active', screenQuality.fps === 60);
+  if (btnBitrateLow && btnBitrateMed && btnBitrateHigh) {
+    btnBitrateLow.classList.toggle('active', screenQuality.bitrateLevel === 'low');
+    btnBitrateMed.classList.toggle('active', screenQuality.bitrateLevel === 'medium');
+    btnBitrateHigh.classList.toggle('active', screenQuality.bitrateLevel === 'high');
+  }
   chkLocalPreview.checked = screenQuality.localPreview;
 
   btnRes720.addEventListener('click', () => {
@@ -1218,6 +1247,29 @@ function initScreenQualityUI() {
     btnFps30.classList.remove('active');
   });
 
+  if (btnBitrateLow && btnBitrateMed && btnBitrateHigh) {
+    btnBitrateLow.addEventListener('click', () => {
+      screenQuality.bitrateLevel = 'low';
+      btnBitrateLow.classList.add('active');
+      btnBitrateMed.classList.remove('active');
+      btnBitrateHigh.classList.remove('active');
+    });
+
+    btnBitrateMed.addEventListener('click', () => {
+      screenQuality.bitrateLevel = 'medium';
+      btnBitrateMed.classList.add('active');
+      btnBitrateLow.classList.remove('active');
+      btnBitrateHigh.classList.remove('active');
+    });
+
+    btnBitrateHigh.addEventListener('click', () => {
+      screenQuality.bitrateLevel = 'high';
+      btnBitrateHigh.classList.add('active');
+      btnBitrateLow.classList.remove('active');
+      btnBitrateMed.classList.remove('active');
+    });
+  }
+
   chkLocalPreview.addEventListener('change', (e) => {
     screenQuality.localPreview = e.target.checked;
   });
@@ -1243,6 +1295,7 @@ function initScreenQualityUI() {
     screenQualityModal.style.display = 'none';
     localStorage.setItem('lowcord_screen_res', screenQuality.resolution);
     localStorage.setItem('lowcord_screen_fps', screenQuality.fps);
+    localStorage.setItem('lowcord_screen_bitrate', screenQuality.bitrateLevel);
     localStorage.setItem('lowcord_screen_preview', screenQuality.localPreview);
     await startScreenShare();
   });
@@ -1272,6 +1325,10 @@ async function startScreenShare() {
 
     const videoTrack = localScreenStream.getVideoTracks()[0];
     const audioTrack = localScreenStream.getAudioTracks()[0];
+
+    if (videoTrack) {
+      try { videoTrack.contentHint = 'motion'; } catch(e) {}
+    }
 
     if (!audioTrack) {
       alert("Aviso sobre el Sonido:\n\nNo se detectó audio en la transmisión seleccionada.\n\n• Para PELÍCULAS o VIDEOS: Selecciona 'Pestaña de Chrome' y marca 'Compartir audio'.\n• Para JUEGOS: Selecciona 'Toda la pantalla' y marca 'Compartir audio del sistema'.\n\n(Nota: Windows no permite capturar sonido si seleccionas solo 'Ventana').");
@@ -1360,11 +1417,12 @@ function renderLocalScreenPill() {
 
   const localCard = document.getElementById('screen-local');
   const hasLocalCard = !!localCard;
+  const bitrateLabel = screenQuality.bitrateLevel === 'low' ? 'Bajo' : (screenQuality.bitrateLevel === 'high' ? 'Alto' : 'Medio');
 
   pill.innerHTML = `
     <div class="pill-local-content">
       <span class="status-pulse-dot"></span>
-      <span class="pill-screen-text">Tu Pantalla (<b id="pill-screen-resolution">${screenQuality.resolution}p @ ${screenQuality.fps} FPS</b>)</span>
+      <span class="pill-screen-text">Tu Pantalla (<b id="pill-screen-resolution">${screenQuality.resolution}p @ ${screenQuality.fps} FPS • ${bitrateLabel}</b>)</span>
       <div class="pill-actions">
         ${hasLocalCard ? '<button type="button" class="btn-pill-action" id="btn-restore-local-card">Mostrar</button>' : '<button type="button" class="btn-pill-action" id="btn-toggle-preview-pip" title="Ver miniatura de tu transmisión">Ver cómo se ve</button>'}
       </div>
@@ -1424,27 +1482,32 @@ function toggleMiniPreview(forceState) {
 
 
 // Ajuste rápido de calidad en caliente (sin desconectar ni cortar llamada)
-async function applyStreamQualityLive(res, fps) {
+async function applyStreamQualityLive(res, fps, bitrateLevel) {
   screenQuality.resolution = res;
   screenQuality.fps = fps;
+  if (bitrateLevel) screenQuality.bitrateLevel = bitrateLevel;
   localStorage.setItem('lowcord_screen_res', res);
   localStorage.setItem('lowcord_screen_fps', fps);
+  localStorage.setItem('lowcord_screen_bitrate', screenQuality.bitrateLevel);
 
   const targetWidth = res === 720 ? 1280 : 1920;
   const targetHeight = res === 720 ? 720 : 1080;
 
   if (localScreenStream) {
     const videoTrack = localScreenStream.getVideoTracks()[0];
-    if (videoTrack && videoTrack.applyConstraints) {
-      try {
-        await videoTrack.applyConstraints({
-          width: { ideal: targetWidth, max: targetWidth },
-          height: { ideal: targetHeight, max: targetHeight },
-          frameRate: { ideal: fps, max: fps }
-        });
-        console.log(`[WebRTC] Calidad de pantalla actualizada en vivo a ${res}p @ ${fps} FPS`);
-      } catch (err) {
-        console.warn('[WebRTC] applyConstraints error:', err);
+    if (videoTrack) {
+      try { videoTrack.contentHint = 'motion'; } catch(e) {}
+      if (videoTrack.applyConstraints) {
+        try {
+          await videoTrack.applyConstraints({
+            width: { ideal: targetWidth, max: targetWidth },
+            height: { ideal: targetHeight, max: targetHeight },
+            frameRate: { ideal: fps, max: fps }
+          });
+          console.log(`[WebRTC] Calidad de pantalla actualizada en vivo a ${res}p @ ${fps} FPS (${screenQuality.bitrateLevel})`);
+        } catch (err) {
+          console.warn('[WebRTC] applyConstraints error:', err);
+        }
       }
     }
 
@@ -1458,8 +1521,9 @@ async function applyStreamQualityLive(res, fps) {
     }
   }
 
+  const bitrateLabel = screenQuality.bitrateLevel === 'low' ? 'Bajo' : (screenQuality.bitrateLevel === 'high' ? 'Alto' : 'Medio');
   const resLabel = document.getElementById('pill-screen-resolution');
-  if (resLabel) resLabel.innerText = `${res}p @ ${fps} FPS`;
+  if (resLabel) resLabel.innerText = `${res}p @ ${fps} FPS • ${bitrateLabel}`;
 
   if (miniPreviewBadge) miniPreviewBadge.innerText = `${res}p @ ${fps} FPS`;
 
@@ -1468,6 +1532,11 @@ async function applyStreamQualityLive(res, fps) {
     btnRes1080.classList.toggle('active', res === 1080);
     btnFps30.classList.toggle('active', fps === 30);
     btnFps60.classList.toggle('active', fps === 60);
+  }
+  if (btnBitrateLow && btnBitrateMed && btnBitrateHigh) {
+    btnBitrateLow.classList.toggle('active', screenQuality.bitrateLevel === 'low');
+    btnBitrateMed.classList.toggle('active', screenQuality.bitrateLevel === 'medium');
+    btnBitrateHigh.classList.toggle('active', screenQuality.bitrateLevel === 'high');
   }
 }
 

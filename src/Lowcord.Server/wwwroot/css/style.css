@@ -1192,6 +1192,17 @@ body {
   margin-top: 4px;
 }
 
+.quality-selector-group.three-cols {
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 8px;
+}
+
+@media (max-width: 480px) {
+  .quality-selector-group.three-cols {
+    grid-template-columns: 1fr;
+  }
+}
+
 .quality-pill-btn {
   display: flex;
   flex-direction: column;

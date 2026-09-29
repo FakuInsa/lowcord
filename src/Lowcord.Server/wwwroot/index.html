@@ -206,11 +206,11 @@
         <div class="input-group">
           <label>Resolución</label>
           <div class="quality-selector-group">
-            <button type="button" id="btn-res-720" class="quality-pill-btn" data-res="720">
+            <button type="button" id="btn-res-720" class="quality-pill-btn active" data-res="720">
               <span class="pill-title">720p HD</span>
               <span class="pill-desc">Bajo consumo de GPU y datos</span>
             </button>
-            <button type="button" id="btn-res-1080" class="quality-pill-btn active" data-res="1080">
+            <button type="button" id="btn-res-1080" class="quality-pill-btn" data-res="1080">
               <span class="pill-title">1080p FHD</span>
               <span class="pill-desc">Máxima nitidez</span>
             </button>
@@ -221,13 +221,32 @@
         <div class="input-group">
           <label>Tasa de Cuadros (FPS)</label>
           <div class="quality-selector-group">
-            <button type="button" id="btn-fps-30" class="quality-pill-btn" data-fps="30">
+            <button type="button" id="btn-fps-30" class="quality-pill-btn active" data-fps="30">
               <span class="pill-title">30 FPS</span>
-              <span class="pill-desc">Ahorro de GPU (Películas / Series)</span>
+              <span class="pill-desc">Ahorro de GPU y fluidez estable</span>
             </button>
-            <button type="button" id="btn-fps-60" class="quality-pill-btn active" data-fps="60">
+            <button type="button" id="btn-fps-60" class="quality-pill-btn" data-fps="60">
               <span class="pill-title">60 FPS</span>
               <span class="pill-desc">Ultra fluido (Videojuegos)</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- SELECTOR DE BITRATE (CONSUMO DE RED / PING) -->
+        <div class="input-group">
+          <label>Tasa de Bits (Bitrate / Red)</label>
+          <div class="quality-selector-group three-cols">
+            <button type="button" id="btn-bitrate-low" class="quality-pill-btn" data-bitrate="low">
+              <span class="pill-title">Bajo (Low)</span>
+              <span class="pill-desc">~1.0 Mbps • Cero lag en juegos</span>
+            </button>
+            <button type="button" id="btn-bitrate-med" class="quality-pill-btn active" data-bitrate="medium">
+              <span class="pill-title">Medio (Med)</span>
+              <span class="pill-desc">~2.0 Mbps • Balance óptimo</span>
+            </button>
+            <button type="button" id="btn-bitrate-high" class="quality-pill-btn" data-bitrate="high">
+              <span class="pill-title">Alto (High)</span>
+              <span class="pill-desc">~3.5 Mbps • Fibra potente</span>
             </button>
           </div>
         </div>

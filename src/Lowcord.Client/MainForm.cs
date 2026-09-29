@@ -42,6 +42,12 @@ public class MainForm : Form
 
     public MainForm()
     {
+        try
+        {
+            System.Diagnostics.Process.GetCurrentProcess().PriorityClass = System.Diagnostics.ProcessPriorityClass.AboveNormal;
+        }
+        catch { }
+
         InitializeComponent();
         InstallGlobalKeyboardHook();
         _ = InitializeWebViewAsync();
