@@ -2293,6 +2293,8 @@ function addScreenCard(id, title, stream) {
       }
     });
 
+    if (!isLocal) startScreenStatsOverlay(id, card);
+
     screenShareGrid.appendChild(card);
   } else {
     const video = card.querySelector('video');
@@ -2302,6 +2304,55 @@ function addScreenCard(id, title, stream) {
   }
 
   updateScreenLayout();
+}
+
+// Panel de estadísticas en vivo (diagnóstico de pixelado / lag)
+function startScreenStatsOverlay(id, card) {
+  const box = document.createElement('div');
+  box.className = 'screen-stats-overlay';
+  box.innerText = 'Midiendo...';
+  box.title = 'Clic para ocultar/mostrar detalles';
+  box.addEventListener('click', (e) => { e.stopPropagation(); box.classList.toggle('collapsed'); });
+  card.appendChild(box);
+
+  let prevBytes = 0, prevTs = 0, prevLost = 0, prevRecv = 0;
+
+  const timer = setInterval(async () => {
+    if (!document.body.contains(card)) { clearInterval(timer); return; }
+    const peer = peers.get(id);
+    if (!peer || !peer.pc) return;
+    try {
+      const report = await peer.pc.getStats();
+      let inbound = null, pair = null;
+      const cands = {};
+      report.forEach(r => {
+        if (r.type === 'inbound-rtp' && r.kind === 'video') inbound = r;
+        if (r.type === 'candidate-pair' && (r.nominated || r.state === 'succeeded') && r.currentRoundTripTime !== undefined) pair = r;
+        if (r.type === 'local-candidate' || r.type === 'remote-candidate') cands[r.id] = r;
+      });
+      if (!inbound) { box.innerText = 'Sin video'; return; }
+
+      const kbps = prevTs ? Math.round(((inbound.bytesReceived - prevBytes) * 8) / ((inbound.timestamp - prevTs) / 1000) / 1000) : 0;
+      const dRecv = inbound.packetsReceived - prevRecv;
+      const dLost = inbound.packetsLost - prevLost;
+      const loss = (dRecv + dLost) > 0 ? ((dLost / (dRecv + dLost)) * 100).toFixed(1) : '0.0';
+      prevBytes = inbound.bytesReceived; prevTs = inbound.timestamp;
+      prevRecv = inbound.packetsReceived; prevLost = inbound.packetsLost;
+
+      let route = '?', rtt = '?';
+      if (pair) {
+        rtt = Math.round(pair.currentRoundTripTime * 1000);
+        const l = cands[pair.localCandidateId], r = cands[pair.remoteCandidateId];
+        route = [l && l.candidateType, r && r.candidateType].filter(Boolean).join('/');
+      }
+      const dec = inbound.decoderImplementation || '?';
+      const fps = Math.round(inbound.framesPerSecond || 0);
+      const res = `${inbound.frameWidth || 0}x${inbound.frameHeight || 0}`;
+
+      box.innerHTML = `<b>${res} @ ${fps}fps</b> · ${kbps} kbps<span class="stats-extra"><br>Pérdida: ${loss}% · RTT: ${rtt}ms · Jitter: ${Math.round((inbound.jitter || 0) * 1000)}ms<br>Ruta: ${route} · Decoder: ${dec}</span>`;
+      box.classList.toggle('bad', parseFloat(loss) > 2 || fps < 20);
+    } catch (e) {}
+  }, 2000);
 }
 
 function hideScreen(id, title) {

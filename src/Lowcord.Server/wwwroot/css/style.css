@@ -1640,3 +1640,22 @@ body {
     opacity: 1;
   }
 }
+
+/* Panel de estadisticas de pantalla recibida */
+.screen-stats-overlay {
+  position: absolute;
+  left: 8px;
+  bottom: 52px;
+  background: rgba(0, 0, 0, 0.72);
+  color: #dbdee1;
+  font-size: 11px;
+  line-height: 1.4;
+  padding: 5px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  z-index: 5;
+  font-family: Consolas, monospace;
+  border-left: 3px solid #23a559;
+}
+.screen-stats-overlay.bad { border-left-color: #f23f43; }
+.screen-stats-overlay.collapsed .stats-extra { display: none; }
