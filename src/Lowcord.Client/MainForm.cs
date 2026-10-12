@@ -12,13 +12,14 @@ public class ClientSettings
     public string ServerCode { get; set; } = "facu";
     public string Channel { get; set; } = "general";
     public string Password { get; set; } = "";
+    public bool IsHosting { get; set; } = false;
     public uint HotkeyVk { get; set; } = (uint)Keys.M;
     public string HotkeyCode { get; set; } = "KeyM";
 }
 
 public class MainForm : Form
 {
-    public const string APP_VERSION = "v2.2";
+    public const string APP_VERSION = "v2.4";
 
     private const int WH_KEYBOARD_LL = 13;
     private const int WM_KEYDOWN = 0x0100;
@@ -75,8 +76,11 @@ public class MainForm : Form
         InitializeComponent();
         InstallGlobalKeyboardHook();
 
-        // Si existen los archivos del servidor local en esta PC, iniciarlo automáticamente
-        _ = AutoStartHostIfPresentAsync();
+        // SOLO iniciar servidor si el usuario eligió explícitamente ser Anfitrión
+        if (_settings.IsHosting)
+        {
+            _ = StartHostProcessesAsync();
+        }
 
         _ = InitializeWebViewAsync();
     }
@@ -155,7 +159,7 @@ public class MainForm : Form
 
         Controls.Add(_webView);
 
-        // Tecla F2 para cambiar de canal en cualquier momento
+        // Tecla F2 para volver a la pantalla de canales en cualquier momento
         KeyPreview = true;
         KeyDown += (s, e) =>
         {
@@ -215,6 +219,24 @@ public class MainForm : Form
                         if (msgString == "EXIT_APP")
                         {
                             BeginInvoke(() => Application.Exit());
+                            return;
+                        }
+                        if (msgString == "START_HOSTING")
+                        {
+                            BeginInvoke(async () =>
+                            {
+                                await StartHostingAsync();
+                                ShowConnectScreen();
+                            });
+                            return;
+                        }
+                        if (msgString == "STOP_HOSTING")
+                        {
+                            BeginInvoke(async () =>
+                            {
+                                await StopHostingAsync();
+                                ShowConnectScreen();
+                            });
                             return;
                         }
                         if (msgString == "EXECUTE_UPDATE" || msgString == "START_UPDATE")
@@ -315,7 +337,6 @@ public class MainForm : Form
                 catch { }
             };
 
-            // Reintento en caso de navegación fallida
             _webView.NavigationCompleted += (sender, args) =>
             {
                 if (!args.IsSuccess && args.WebErrorStatus != CoreWebView2WebErrorStatus.OperationCanceled)
@@ -324,10 +345,7 @@ public class MainForm : Form
                 }
             };
 
-            // Comprobar actualizaciones en segundo plano
             _ = Task.Run(async () => await CheckForUpdatesAsync());
-
-            // Mostrar pantalla inicial
             ShowConnectScreen();
         }
         catch (Exception ex)
@@ -341,15 +359,41 @@ public class MainForm : Form
         }
     }
 
-    private async Task AutoStartHostIfPresentAsync()
+    private async Task StartHostingAsync()
+    {
+        _settings.IsHosting = true;
+        SaveSettings();
+        await StartHostProcessesAsync();
+    }
+
+    private async Task StopHostingAsync()
+    {
+        _settings.IsHosting = false;
+        SaveSettings();
+
+        await Task.Run(() =>
+        {
+            try
+            {
+                var cfProcs = System.Diagnostics.Process.GetProcessesByName("cloudflared");
+                foreach (var p in cfProcs) { try { p.Kill(); } catch { } }
+
+                var srvProcs = System.Diagnostics.Process.GetProcessesByName("Lowcord.Server");
+                foreach (var p in srvProcs) { try { p.Kill(); } catch { } }
+            }
+            catch { }
+        });
+    }
+
+    private async Task StartHostProcessesAsync()
     {
         var serverExe = FindServerExecutable();
         if (string.IsNullOrEmpty(serverExe) || !File.Exists(serverExe))
         {
-            return; // Esta máquina es cliente puro (amigo)
+            return;
         }
 
-        // 1. Iniciar Lowcord.Server si no está corriendo
+        // 1. Iniciar Lowcord.Server si no está escuchando
         if (!await IsLocalServerRunningAsync())
         {
             try
@@ -367,7 +411,7 @@ public class MainForm : Form
             catch { }
         }
 
-        // 2. Iniciar cloudflared tunnel si existe
+        // 2. Iniciar cloudflared tunnel
         var cloudflaredExe = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "cloudflared.exe");
         if (File.Exists(cloudflaredExe))
         {
@@ -391,7 +435,6 @@ public class MainForm : Form
             }
             catch { }
 
-            // 3. Monitorear el túnel y publicar en segundo plano
             _ = Task.Run(async () =>
             {
                 var roomCode = string.IsNullOrWhiteSpace(_settings.ServerCode) ? "facu" : _settings.ServerCode;
@@ -449,8 +492,8 @@ public class MainForm : Form
             return "http://" + input;
         }
 
-        // Si este equipo es el host y el código coincide con el local
-        if (await IsLocalServerRunningAsync() && IsTargetMatchingLocalHost(input))
+        // Si este equipo es el host actualmente y coincide con la sala
+        if (_settings.IsHosting && await IsLocalServerRunningAsync() && IsTargetMatchingLocalHost(input))
         {
             return "http://localhost:8080";
         }
@@ -496,26 +539,25 @@ public class MainForm : Form
     {
         StopAutoRetry();
 
-        // 1. Si no tiene nombre guardado, pedir nombre (una sola vez para siempre)
+        // 1. Si no tiene nombre guardado, pedir nombre (solo una vez para siempre)
         if (string.IsNullOrWhiteSpace(_settings.Username))
         {
             ShowAskNameScreen();
             return;
         }
 
-        // 2. Determinar estado del servidor (local o remoto)
-        var isLocal = await IsLocalServerRunningAsync();
+        var hasHostFiles = !string.IsNullOrEmpty(FindServerExecutable());
+        var isHostingNow = _settings.IsHosting && (await IsLocalServerRunningAsync());
         var serverCode = System.Net.WebUtility.HtmlEncode(_settings.ServerCode);
         var safeUser = System.Net.WebUtility.HtmlEncode(_settings.Username);
-        var safePass = System.Net.WebUtility.HtmlEncode(_settings.Password);
 
-        // Obtener canales activos
+        // Obtener canales del servidor correspondiente
         string channelsJson = "[]";
-        if (isLocal)
+        if (isHostingNow)
         {
             channelsJson = await FetchChannelsJsonAsync("http://localhost:8080");
         }
-        else
+        else if (!string.IsNullOrWhiteSpace(_settings.ServerCode))
         {
             var resolved = await ResolveInputToUrlAsync(_settings.ServerCode);
             if (!string.IsNullOrEmpty(resolved))
@@ -561,7 +603,7 @@ public class MainForm : Form
       border: 1px solid rgba(255, 255, 255, 0.08);
       border-radius: 16px;
       padding: 26px 28px;
-      width: 480px;
+      width: 490px;
       max-width: 95vw;
       box-shadow: 0 16px 40px rgba(0,0,0,0.5);
     }}
@@ -632,7 +674,7 @@ public class MainForm : Form
       width: 9px;
       height: 9px;
       border-radius: 50%;
-      background: {(isLocal ? "#23a55a" : "#f0b232")};
+      background: {(isHostingNow ? "#23a55a" : "#f0b232")};
     }}
     .server-input-box {{
       background: #2b2d31;
@@ -642,7 +684,7 @@ public class MainForm : Form
       font-size: 12.5px;
       font-weight: 600;
       padding: 4px 8px;
-      width: 100px;
+      width: 110px;
       outline: none;
       text-align: center;
     }}
@@ -657,6 +699,18 @@ public class MainForm : Form
       cursor: pointer;
     }}
     .btn-action-small:hover {{ background: #4752c4; }}
+
+    .btn-danger-small {{
+      background: #da373c;
+      color: #fff;
+      border: none;
+      padding: 5px 12px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+    }}
+    .btn-danger-small:hover {{ background: #a1282c; }}
 
     .section-title {{
       font-size: 12px;
@@ -743,6 +797,18 @@ public class MainForm : Form
       outline: none;
     }}
     .input-ch:focus {{ border-color: #5865F2; }}
+
+    .host-control-box {{
+      background: rgba(88, 101, 242, 0.1);
+      border: 1px dashed rgba(88, 101, 242, 0.4);
+      border-radius: 10px;
+      padding: 12px 14px;
+      margin-top: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 12.5px;
+    }}
     
     .update-alert {{
       background: rgba(88, 101, 242, 0.2);
@@ -792,29 +858,31 @@ public class MainForm : Form
       </div>
     </div>
 
-    <!-- Barra de Servidor / Sala -->
+    <!-- Barra de Servidor -->
     <div class='server-bar'>
       <div class='server-info'>
         <div class='server-dot'></div>
-        <span>Servidor:</span>
+        <span>{(isHostingNow ? "Tu Servidor:" : "Servidor:")}</span>
         <input type='text' id='serverInput' class='server-input-box' value='{serverCode}' onchange='updateServerCode(this.value)'>
       </div>
-      <button type='button' class='btn-action-small' onclick='copyShare()'>Copiar Enlace</button>
+      {(isHostingNow
+        ? $"<button type='button' class='btn-action-small' onclick='copyShare()'>Copiar Enlace</button>"
+        : $"<button type='button' class='btn-action-small' onclick='updateServerCode(document.getElementById(\"serverInput\").value)'>Conectar</button>")}
     </div>
 
-    <!-- Lista de Canales Disponibles -->
+    <!-- Lista de Canales -->
     <div class='section-title'>
-      <span>Canales de Voz Disponibles</span>
+      <span>Canales de Voz</span>
       <span style='cursor: pointer; color: #5865F2;' onclick='window.location.reload()'>↻ Actualizar</span>
     </div>
 
     <div class='channels-list' id='channelsContainer'>
-      <!-- Renderizado dinámicamente con JS -->
+      <!-- Renderizado por JS -->
     </div>
 
-    <!-- Crear / Entrar a otro canal -->
+    <!-- Crear o entrar a un canal manual -->
     <div class='create-box'>
-      <div style='font-size: 12px; font-weight: 600; color: #b5bac1;'>+ Crear o entrar a un canal con clave:</div>
+      <div style='font-size: 12px; font-weight: 600; color: #b5bac1;'>Entrar a canal específico:</div>
       <form onsubmit='createAndJoin(event)' class='create-row'>
         <input type='text' id='customChName' class='input-ch' placeholder='Nombre del canal (ej: tarkov)' required>
         <input type='password' id='customChPass' class='input-ch' placeholder='Clave (opcional)' style='max-width: 130px;'>
@@ -822,8 +890,20 @@ public class MainForm : Form
       </form>
     </div>
 
+    <!-- Control de Host opcional si los archivos de servidor existen -->
+    {(hasHostFiles ? $@"
+    <div class='host-control-box'>
+      <div>
+        <b>{(isHostingNow ? "Servidor local ACTIVO en tu PC" : "¿Quieres ser tú el Anfitrión?")}</b>
+        <div style='color: #949ba4; font-size: 11.5px;'>{(isHostingNow ? "Tus amigos pueden entrar con tu código." : "Inicia el servidor solo si vas a alojar la llamada.")}</div>
+      </div>
+      {(isHostingNow
+        ? "<button type='button' class='btn-danger-small' onclick='window.chrome.webview.postMessage(\"STOP_HOSTING\")'>Detener Servidor</button>"
+        : "<button type='button' class='btn-action-small' onclick='window.chrome.webview.postMessage(\"START_HOSTING\")'>Iniciar mi Servidor</button>")}
+    </div>" : "")}
+
     <div class='footer-note'>
-      {APP_VERSION} • Atajo global para mutearte activo • Pulsa F2 para volver aquí
+      {APP_VERSION} • Atajo global (M) para mutearte • Pulsa F2 para cambiar de canal
     </div>
   </div>
 
@@ -836,7 +916,6 @@ public class MainForm : Form
       var container = document.getElementById('channelsContainer');
       container.innerHTML = '';
 
-      // Si no hay canales activos creados en el servidor, mostrar al menos 'general'
       var list = (currentChannels && currentChannels.length > 0) ? currentChannels : [
         {{ roomId: 'general', userCount: 0, users: [], hasPassword: false }},
         {{ roomId: 'tarkov', userCount: 0, users: [], hasPassword: false }}
@@ -1040,15 +1119,15 @@ public class MainForm : Form
         var user = _settings.Username;
         var pass = _settings.Password;
 
-        // 1. Si el servidor local está activo y coincide con este código
-        if (await IsLocalServerRunningAsync() && IsTargetMatchingLocalHost(serverCode))
+        // 1. Si este equipo está hosteando activamente
+        if (_settings.IsHosting && await IsLocalServerRunningAsync() && IsTargetMatchingLocalHost(serverCode))
         {
             var hostUrl = $"http://localhost:8080/?room={Uri.EscapeDataString(channel)}&user={Uri.EscapeDataString(user)}&pass={Uri.EscapeDataString(pass)}&autojoin=true";
             _webView.Source = new Uri(hostUrl);
             return;
         }
 
-        // 2. Cliente remoto: resolver servidor
+        // 2. Cliente remoto: resolver servidor de tu amigo
         var resolved = await ResolveInputToUrlAsync(serverCode);
         if (!string.IsNullOrEmpty(resolved) && Uri.TryCreate(resolved, UriKind.Absolute, out var baseUri))
         {
@@ -1208,7 +1287,7 @@ public class MainForm : Form
             var user = _settings.Username;
             var pass = _settings.Password;
 
-            if (await IsLocalServerRunningAsync() && IsTargetMatchingLocalHost(serverCode))
+            if (_settings.IsHosting && await IsLocalServerRunningAsync() && IsTargetMatchingLocalHost(serverCode))
             {
                 StopAutoRetry();
                 var hostUrl = $"http://localhost:8080/?room={Uri.EscapeDataString(channel)}&user={Uri.EscapeDataString(user)}&pass={Uri.EscapeDataString(pass)}&autojoin=true";
@@ -1558,7 +1637,7 @@ public class MainForm : Form
             "space" => (uint)Keys.Space,
             "capslock" => (uint)Keys.CapsLock,
             "tab" => (uint)Keys.Tab,
-            "backquote" => 0xDC, // Tecla al lado del 1 en layout latinoamericano / español
+            "backquote" => 0xDC,
             "oem5" or "oem_5" => 0xDC,
             "oem3" or "oem_3" => 0xC0,
             "minus" => 0xBD,
@@ -1587,6 +1666,18 @@ public class MainForm : Form
     protected override void OnFormClosing(FormClosingEventArgs e)
     {
         UninstallGlobalKeyboardHook();
+
+        // Limpiar procesos de servidor y túnel al cerrar la aplicación
+        try
+        {
+            var cfProcs = System.Diagnostics.Process.GetProcessesByName("cloudflared");
+            foreach (var p in cfProcs) { try { p.Kill(); } catch { } }
+
+            var srvProcs = System.Diagnostics.Process.GetProcessesByName("Lowcord.Server");
+            foreach (var p in srvProcs) { try { p.Kill(); } catch { } }
+        }
+        catch { }
+
         base.OnFormClosing(e);
     }
 }
