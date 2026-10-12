@@ -54,5 +54,6 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         with:
           files: |
+            client_only/Lowcord-Client.exe
             Lowcord-Client-Windows-x64.zip
             Lowcord-Host-Completo-Windows-x64.zip

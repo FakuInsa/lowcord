@@ -6,8 +6,18 @@ using Microsoft.Web.WebView2.WinForms;
 
 namespace Lowcord.Client;
 
+public class ClientSettings
+{
+    public string Username { get; set; } = "";
+    public string Channel { get; set; } = "general";
+    public string Password { get; set; } = "";
+    public bool IsHost { get; set; } = false;
+}
+
 public class MainForm : Form
 {
+    public const string APP_VERSION = "v2.2";
+
     private const int WH_KEYBOARD_LL = 13;
     private const int WM_KEYDOWN = 0x0100;
     private const int WM_KEYUP = 0x0101;
@@ -36,39 +46,89 @@ public class MainForm : Form
     private static readonly HttpClient _httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(6) };
 
     private WebView2 _webView = null!;
+    private readonly string _settingsFile = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "client_config.json");
     private readonly string _configFile = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "server.txt");
-    private string _serverUrl = "";
+    private ClientSettings _settings = new();
+
     private System.Windows.Forms.Timer? _retryTimer;
+    private string? _pendingUpdateUrl = null;
+    private string? _pendingUpdateVersion = null;
 
     public MainForm()
     {
         try
         {
             System.Diagnostics.Process.GetCurrentProcess().PriorityClass = System.Diagnostics.ProcessPriorityClass.AboveNormal;
+            CleanUpOldUpdates();
         }
         catch { }
 
+        LoadSettings();
         InitializeComponent();
         InstallGlobalKeyboardHook();
         _ = InitializeWebViewAsync();
     }
 
+    private void CleanUpOldUpdates()
+    {
+        try
+        {
+            var currentExe = Environment.ProcessPath ?? Application.ExecutablePath;
+            var oldExe = currentExe + ".old";
+            if (File.Exists(oldExe)) File.Delete(oldExe);
+
+            var dir = Path.GetDirectoryName(currentExe);
+            if (!string.IsNullOrEmpty(dir))
+            {
+                foreach (var tmp in Directory.GetFiles(dir, "*.tmp"))
+                {
+                    try { File.Delete(tmp); } catch { }
+                }
+            }
+        }
+        catch { }
+    }
+
+    private void LoadSettings()
+    {
+        try
+        {
+            if (File.Exists(_settingsFile))
+            {
+                var json = File.ReadAllText(_settingsFile);
+                var loaded = JsonSerializer.Deserialize<ClientSettings>(json);
+                if (loaded != null) _settings = loaded;
+            }
+            else if (File.Exists(_configFile))
+            {
+                var saved = File.ReadAllText(_configFile).Trim();
+                if (!string.IsNullOrEmpty(saved))
+                {
+                    _settings.Channel = saved;
+                }
+            }
+        }
+        catch { }
+    }
+
+    private void SaveSettings()
+    {
+        try
+        {
+            var json = JsonSerializer.Serialize(_settings, new JsonSerializerOptions { WriteIndented = true });
+            File.WriteAllText(_settingsFile, json);
+            File.WriteAllText(_configFile, _settings.Channel);
+        }
+        catch { }
+    }
+
     private void InitializeComponent()
     {
-        Text = "Lowcord - Cliente Ultra-Ligero P2P";
+        Text = $"Lowcord {APP_VERSION} - Cliente Ultra-Ligero P2P";
         Width = 1100;
         Height = 720;
         StartPosition = FormStartPosition.CenterScreen;
         BackColor = Color.FromArgb(30, 31, 34);
-
-        if (File.Exists(_configFile))
-        {
-            var saved = File.ReadAllText(_configFile).Trim();
-            if (!string.IsNullOrEmpty(saved))
-            {
-                _serverUrl = saved;
-            }
-        }
 
         _webView = new WebView2
         {
@@ -77,7 +137,7 @@ public class MainForm : Form
 
         Controls.Add(_webView);
 
-        // Tecla F2 para cambiar de sala en cualquier momento
+        // Tecla F2 para cambiar de canal en cualquier momento
         KeyPreview = true;
         KeyDown += (s, e) =>
         {
@@ -115,7 +175,7 @@ public class MainForm : Form
             _webView.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
             _webView.CoreWebView2.Settings.IsStatusBarEnabled = false;
 
-            // Escuchar mensajes del cliente web (ej: atajos o botón Cambiar Sala)
+            // Escuchar mensajes del cliente web
             _webView.CoreWebView2.WebMessageReceived += (sender, args) =>
             {
                 try
@@ -127,12 +187,12 @@ public class MainForm : Form
                     }
                     catch
                     {
-                        // Si el mensaje es un objeto JSON, TryGetWebMessageAsString lanza ArgumentException
+                        // Si el mensaje viene como objeto JSON puro
                     }
 
                     if (!string.IsNullOrEmpty(msgString))
                     {
-                        if (msgString == "CHANGE_SERVER")
+                        if (msgString == "CHANGE_SERVER" || msgString == "CHANGE_CHANNEL")
                         {
                             BeginInvoke(() => ShowConnectScreen());
                             return;
@@ -142,15 +202,27 @@ public class MainForm : Form
                             BeginInvoke(() => Application.Exit());
                             return;
                         }
-                        if (msgString.StartsWith("CONNECT_ROOM:"))
+                        if (msgString == "EXECUTE_UPDATE" || msgString == "START_UPDATE")
                         {
-                            var target = msgString.Substring("CONNECT_ROOM:".Length).Trim();
-                            if (!string.IsNullOrWhiteSpace(target))
+                            BeginInvoke(async () => await ExecuteUpdateAsync());
+                            return;
+                        }
+                        if (msgString.StartsWith("CONNECT_CHANNEL:"))
+                        {
+                            var jsonPayload = msgString.Substring("CONNECT_CHANNEL:".Length).Trim();
+                            try
                             {
-                                _serverUrl = target;
-                                try { File.WriteAllText(_configFile, _serverUrl); } catch { }
-                                BeginInvoke(async () => await NavigateToServerAsync());
+                                using var doc = JsonDocument.Parse(jsonPayload);
+                                var root = doc.RootElement;
+                                _settings.Username = root.TryGetProperty("user", out var u) ? u.GetString() ?? "" : "";
+                                _settings.Channel = (root.TryGetProperty("channel", out var c) ? c.GetString() ?? "general" : "general").Trim().ToLowerInvariant();
+                                _settings.Password = root.TryGetProperty("pass", out var p) ? p.GetString() ?? "" : "";
+                                _settings.IsHost = root.TryGetProperty("isHost", out var h) && h.GetBoolean();
+                                SaveSettings();
+
+                                BeginInvoke(async () => await ConnectToChannelAsync());
                             }
+                            catch { }
                             return;
                         }
                     }
@@ -175,12 +247,16 @@ public class MainForm : Form
                         var root = doc.RootElement;
                         if (root.ValueKind == JsonValueKind.Object)
                         {
-                            if (root.TryGetProperty("type", out var typeProp) && typeProp.GetString() == "UPDATE_HOTKEY")
+                            if (root.TryGetProperty("type", out var typeProp))
                             {
-                                if (root.TryGetProperty("code", out var codeProp))
+                                var type = typeProp.GetString();
+                                if (type == "UPDATE_HOTKEY" && root.TryGetProperty("code", out var codeProp))
                                 {
-                                    var code = codeProp.GetString();
-                                    UpdateGlobalHotkey(code);
+                                    UpdateGlobalHotkey(codeProp.GetString());
+                                }
+                                else if (type == "EXECUTE_UPDATE")
+                                {
+                                    BeginInvoke(async () => await ExecuteUpdateAsync());
                                 }
                             }
                         }
@@ -189,16 +265,20 @@ public class MainForm : Form
                 catch { }
             };
 
-            // Si falla la navegación (ej: servidor caído o túnel cerrado), mostrar pantalla de espera con reintento automático
+            // Reintento automático en caso de pérdida de conexión
             _webView.NavigationCompleted += (sender, args) =>
             {
                 if (!args.IsSuccess && args.WebErrorStatus != CoreWebView2WebErrorStatus.OperationCanceled)
                 {
-                    ShowWaitingScreen(_serverUrl);
+                    ShowWaitingScreen(_settings.Channel);
                 }
             };
 
-            _ = NavigateToServerAsync();
+            // Comprobar actualizaciones en segundo plano al iniciar
+            _ = Task.Run(async () => await CheckForUpdatesAsync());
+
+            // Mostrar pantalla inicial de canal y contraseña
+            ShowConnectScreen();
         }
         catch (Exception ex)
         {
@@ -215,8 +295,8 @@ public class MainForm : Form
     {
         try
         {
-            using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(400));
-            var resp = await _httpClient.GetAsync("http://localhost:8080", cts.Token);
+            using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(450));
+            var resp = await _httpClient.GetAsync("http://localhost:8080/api/health", cts.Token);
             return resp.IsSuccessStatusCode;
         }
         catch
@@ -230,20 +310,17 @@ public class MainForm : Form
         input = input.Trim();
         if (string.IsNullOrWhiteSpace(input)) return null;
 
-        // Si ya es una URL completa
         if (input.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
             input.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
         {
             return input;
         }
 
-        // Si es IP directa
         if (input.StartsWith("127.0.0.1") || (input.Contains(':') && !input.Contains(' ')))
         {
             return "http://" + input;
         }
 
-        // Si es un código de sala (ej: "facu")
         var code = input.ToLowerInvariant();
         try
         {
@@ -261,10 +338,7 @@ public class MainForm : Form
                 }
             }
         }
-        catch
-        {
-            // Error de conexión con keyval
-        }
+        catch { }
 
         return null;
     }
@@ -273,14 +347,27 @@ public class MainForm : Form
     {
         StopAutoRetry();
 
-        var currentVal = string.IsNullOrWhiteSpace(_serverUrl) || _serverUrl.Contains("localhost") ? "" : _serverUrl;
+        var safeUser = System.Net.WebUtility.HtmlEncode(_settings.Username);
+        var safeChannel = System.Net.WebUtility.HtmlEncode(_settings.Channel);
+        var safePass = System.Net.WebUtility.HtmlEncode(_settings.Password);
+        var hostChecked = _settings.IsHost ? "checked" : "";
+
+        var updateHtml = "";
+        if (!string.IsNullOrEmpty(_pendingUpdateVersion))
+        {
+            updateHtml = $@"
+        <div class='update-alert'>
+          <span>🚀 <b>Actualización lista ({_pendingUpdateVersion})</b></span>
+          <button type='button' class='btn-mini-update' onclick='window.chrome.webview.postMessage(""EXECUTE_UPDATE"")'>Actualizar Ahora</button>
+        </div>";
+        }
 
         var html = $@"
 <!DOCTYPE html>
 <html>
 <head>
   <meta charset='utf-8'>
-  <title>Unirse a Sala Lowcord</title>
+  <title>Entrar a Lowcord</title>
   <style>
     * {{ box-sizing: border-box; margin: 0; padding: 0; }}
     body {{
@@ -291,57 +378,91 @@ public class MainForm : Form
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      height: 100vh;
+      min-height: 100vh;
       user-select: none;
+      padding: 20px;
     }}
     .card {{
       background: #2b2d31;
       border: 1px solid rgba(255, 255, 255, 0.08);
       border-radius: 16px;
-      padding: 38px 34px;
-      width: 440px;
+      padding: 34px 30px;
+      width: 420px;
+      max-width: 95vw;
       text-align: center;
       box-shadow: 0 16px 40px rgba(0,0,0,0.5);
+      position: relative;
     }}
     .logo {{
-      width: 60px;
-      height: 60px;
+      width: 56px;
+      height: 56px;
       background: linear-gradient(135deg, #5865F2 0%, #4752c4 100%);
-      border-radius: 18px;
-      margin: 0 auto 18px auto;
+      border-radius: 16px;
+      margin: 0 auto 16px auto;
       display: flex;
       align-items: center;
       justify-content: center;
       box-shadow: 0 6px 20px rgba(88, 101, 242, 0.35);
     }}
-    .logo svg {{ width: 34px; height: 34px; fill: #fff; }}
+    .logo svg {{ width: 30px; height: 30px; fill: #fff; }}
     h2 {{
-      margin-bottom: 8px;
+      margin-bottom: 6px;
       font-size: 22px;
       font-weight: 700;
       color: #fff;
     }}
-    p {{
+    p.desc {{
       color: #949ba4;
-      font-size: 13.5px;
+      font-size: 13px;
       line-height: 1.4;
       margin-bottom: 22px;
     }}
+    .form-group {{
+      text-align: left;
+      margin-bottom: 15px;
+    }}
+    label {{
+      display: block;
+      color: #b5bac1;
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 6px;
+    }}
     .input-box {{
       width: 100%;
-      padding: 12px 14px;
+      padding: 11px 13px;
       background: #1e1f22;
-      border: 1px solid rgba(255, 255, 255, 0.15);
+      border: 1px solid rgba(255, 255, 255, 0.12);
       border-radius: 8px;
       color: #fff;
-      font-size: 15px;
-      font-weight: 600;
-      text-align: center;
-      margin-bottom: 16px;
+      font-size: 14.5px;
+      font-weight: 500;
       outline: none;
+      transition: border-color 0.15s;
     }}
     .input-box:focus {{
       border-color: #5865F2;
+    }}
+    .toggle-row {{
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      margin: 16px 0 20px 0;
+      cursor: pointer;
+      text-align: left;
+    }}
+    .toggle-row input {{
+      width: 16px;
+      height: 16px;
+      accent-color: #5865F2;
+      cursor: pointer;
+    }}
+    .toggle-row span {{
+      color: #dbdee1;
+      font-size: 13px;
+      font-weight: 500;
     }}
     .btn {{
       width: 100%;
@@ -350,51 +471,104 @@ public class MainForm : Form
       border: none;
       padding: 12px;
       border-radius: 8px;
-      font-size: 14.5px;
+      font-size: 15px;
       font-weight: 600;
       cursor: pointer;
-      transition: background 0.15s;
+      transition: background 0.15s, transform 0.05s;
     }}
-    .btn:hover {{
-      background: #4752c4;
+    .btn:hover {{ background: #4752c4; }}
+    .btn:active {{ transform: scale(0.99); }}
+    .footer-note {{
+      margin-top: 18px;
+      color: #80848e;
+      font-size: 11.5px;
     }}
-    .btn-secondary {{
-      background: #35373c;
+    .update-alert {{
+      background: rgba(88, 101, 242, 0.2);
+      border: 1px solid #5865F2;
+      border-radius: 8px;
+      padding: 9px 12px;
+      margin-bottom: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 12.5px;
       color: #dbdee1;
     }}
-    .btn-secondary:hover {{
-      background: #4e5058;
+    .btn-mini-update {{
+      background: #5865F2;
       color: #fff;
+      border: none;
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-size: 11.5px;
+      font-weight: 600;
+      cursor: pointer;
     }}
+    .btn-mini-update:hover {{ background: #4752c4; }}
   </style>
 </head>
 <body>
   <div class='card'>
+    {updateHtml}
     <div class='logo'>
       <svg viewBox='0 0 24 24'><path d='M12 3a9 9 0 0 0-9 9v7a3 3 0 0 0 3 3h1a1 1 0 0 0 1-1v-6a1 1 0 0 0-1-1H5v-3a7 7 0 1 1 14 0v3h-2a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h1a3 3 0 0 0 3-3v-7a9 9 0 0 0-9-9z'/></svg>
     </div>
-    <h2>Conectar a un Servidor</h2>
-    <p>Ingresa el nombre o código del servidor de tu amigo (ej: facu, squad5):</p>
-    <form onsubmit='submitRoom(event)'>
-      <input type='text' id='roomInput' class='input-box' value='{currentVal}' placeholder='Nombre o código de servidor' autocomplete='off' required autofocus>
-      <div style='display: flex; gap: 10px;'>
-        <button type='button' class='btn btn-secondary' style='flex: 1;' onclick='window.chrome.webview.postMessage(""EXIT_APP"")'>Salir</button>
-        <button type='submit' class='btn' style='flex: 2;'>Conectar</button>
+    <h2>Lowcord</h2>
+    <p class='desc'>Chat de voz y pantalla compartida P2P ultra-ligero</p>
+
+    <form onsubmit='handleConnect(event)'>
+      <div class='form-group'>
+        <label>Tu Nombre o Apodo</label>
+        <input type='text' id='userInput' class='input-box' value='{safeUser}' placeholder='Ej: Faku' required autocomplete='off' autofocus>
       </div>
+
+      <div class='form-group'>
+        <label>Nombre del Canal</label>
+        <input type='text' id='channelInput' class='input-box' value='{safeChannel}' placeholder='Ej: tarkov, squad' required autocomplete='off'>
+      </div>
+
+      <div class='form-group'>
+        <label>Contraseña del Canal</label>
+        <input type='password' id='passInput' class='input-box' value='{safePass}' placeholder='Clave de acceso (opcional)' autocomplete='off'>
+      </div>
+
+      <label class='toggle-row'>
+        <input type='checkbox' id='hostCheck' {hostChecked}>
+        <span>Soy el Anfitrión (Alojar este canal en mi PC)</span>
+      </label>
+
+      <button type='submit' class='btn' id='btnSubmit'>Entrar al Canal</button>
     </form>
+
+    <div class='footer-note'>
+      {APP_VERSION} • Cero lag • Atajo global (M) • Presiona F2 para cambiar de canal
+    </div>
   </div>
+
   <script>
-    function submitRoom(e) {{
+    function handleConnect(e) {{
       e.preventDefault();
-      var val = (document.getElementById('roomInput').value || '').trim();
-      if (val) {{
-        window.chrome.webview.postMessage('CONNECT_ROOM:' + val);
-      }}
+      var user = (document.getElementById('userInput').value || '').trim();
+      var channel = (document.getElementById('channelInput').value || '').trim().toLowerCase();
+      var pass = (document.getElementById('passInput').value || '').trim();
+      var isHost = document.getElementById('hostCheck').checked;
+
+      if (!user || !channel) return;
+
+      var btn = document.getElementById('btnSubmit');
+      btn.disabled = true;
+      btn.innerText = 'Conectando...';
+
+      var payload = JSON.stringify({{
+        user: user,
+        channel: channel,
+        pass: pass,
+        isHost: isHost
+      }});
+
+      window.chrome.webview.postMessage('CONNECT_CHANNEL:' + payload);
     }}
-    setTimeout(function() {{
-      var el = document.getElementById('roomInput');
-      if (el) {{ el.focus(); el.select(); }}
-    }}, 100);
   </script>
 </body>
 </html>";
@@ -402,107 +576,58 @@ public class MainForm : Form
         _webView.NavigateToString(html);
     }
 
-    private string? GetLocalRoomCode()
+    private async Task ConnectToChannelAsync()
     {
-        try
+        StopAutoRetry();
+
+        var channel = _settings.Channel;
+        var user = _settings.Username;
+        var pass = _settings.Password;
+
+        // 1. Modo anfitrión (Host)
+        if (_settings.IsHost)
         {
-            var paths = new[]
-            {
-                Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "room_code.txt"),
-                Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "room_code.txt"),
-                Path.Combine(Environment.CurrentDirectory, "room_code.txt"),
-                Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "..", "..", "EJECUTABLES_LISTOS", "room_code.txt")
-            };
-            foreach (var p in paths)
-            {
-                if (File.Exists(p))
-                {
-                    var txt = File.ReadAllText(p).Trim();
-                    if (!string.IsNullOrEmpty(txt)) return txt.ToLowerInvariant();
-                }
-            }
-        }
-        catch { }
-        return null;
-    }
-
-    private bool IsTargetMatchingLocalHost(string target)
-    {
-        if (string.IsNullOrWhiteSpace(target) || target.Contains("localhost") || target.StartsWith("127.0.0.1"))
-            return true;
-
-        var localRoom = GetLocalRoomCode();
-        if (!string.IsNullOrEmpty(localRoom) && string.Equals(target.Trim(), localRoom, StringComparison.OrdinalIgnoreCase))
-            return true;
-
-        return false;
-    }
-
-    private async Task NavigateToServerAsync()
-    {
-        // 1. Si el servidor local está activo Y el objetivo coincide con la sala local (o no hay sala configurada)
-        if (await IsLocalServerRunningAsync() && IsTargetMatchingLocalHost(_serverUrl))
-        {
-            StopAutoRetry();
-            _webView.Source = new Uri("http://localhost:8080");
+            await EnsureHostServerRunningAsync(channel);
+            var hostUrl = $"http://localhost:8080/?room={Uri.EscapeDataString(channel)}&user={Uri.EscapeDataString(user)}&pass={Uri.EscapeDataString(pass)}&autojoin=true";
+            _webView.Source = new Uri(hostUrl);
             return;
         }
 
-        // 2. Si no es el anfitrión (o apunta a otra sala) y no hay sala configurada en memoria
-        if (string.IsNullOrWhiteSpace(_serverUrl) || _serverUrl.Contains("localhost"))
+        // 2. Si el servidor local ya está activo y coincide con este canal
+        if (await IsLocalServerRunningAsync() && IsTargetMatchingLocalHost(channel))
         {
-            if (File.Exists(_configFile))
+            var hostUrl = $"http://localhost:8080/?room={Uri.EscapeDataString(channel)}&user={Uri.EscapeDataString(user)}&pass={Uri.EscapeDataString(pass)}&autojoin=true";
+            _webView.Source = new Uri(hostUrl);
+            return;
+        }
+
+        // 3. Cliente remoto: resolver canal
+        var resolved = await ResolveInputToUrlAsync(channel);
+        if (!string.IsNullOrEmpty(resolved) && Uri.TryCreate(resolved, UriKind.Absolute, out var baseUri))
+        {
+            var sep = resolved.Contains('?') ? "&" : "?";
+            var finalUrl = $"{resolved}{sep}room={Uri.EscapeDataString(channel)}&user={Uri.EscapeDataString(user)}&pass={Uri.EscapeDataString(pass)}&autojoin=true";
+            if (Uri.TryCreate(finalUrl, UriKind.Absolute, out var fullUri))
             {
-                var saved = (await File.ReadAllTextAsync(_configFile)).Trim();
-                if (!string.IsNullOrEmpty(saved) && !saved.Contains("localhost"))
-                {
-                    _serverUrl = saved;
-                }
+                _webView.Source = fullUri;
+                return;
             }
         }
 
-        // Si todavía no hay sala especificada
-        if (string.IsNullOrWhiteSpace(_serverUrl) || _serverUrl.Contains("localhost"))
-        {
-            ShowConnectScreen();
-            return;
-        }
-
-        // Si el objetivo es la sala local y el servidor local está corriendo
-        if (await IsLocalServerRunningAsync() && IsTargetMatchingLocalHost(_serverUrl))
-        {
-            StopAutoRetry();
-            _webView.Source = new Uri("http://localhost:8080");
-            return;
-        }
-
-        // De lo contrario, buscar sala remota
-        var resolved = await ResolveInputToUrlAsync(_serverUrl);
-        if (!string.IsNullOrEmpty(resolved) && Uri.TryCreate(resolved, UriKind.Absolute, out var uri))
-        {
-            StopAutoRetry();
-            _webView.Source = uri;
-        }
-        else
-        {
-            ShowWaitingScreen(_serverUrl);
-        }
+        // 4. Si el canal aún no está online, mostrar espera con reintento automático
+        ShowWaitingScreen(channel);
     }
 
-    private void ShowWaitingScreen(string roomCode)
+    private void ShowWaitingScreen(string channel)
     {
-        var displayCode = string.IsNullOrWhiteSpace(roomCode) ? "-" : roomCode;
-        if (displayCode.StartsWith("http://") || displayCode.StartsWith("https://"))
-        {
-            displayCode = "Enlace Web";
-        }
+        var displayChannel = string.IsNullOrWhiteSpace(channel) ? "-" : channel;
 
         var html = $@"
 <!DOCTYPE html>
 <html>
 <head>
   <meta charset='utf-8'>
-  <title>Buscando sala...</title>
+  <title>Conectando al canal...</title>
   <style>
     * {{ box-sizing: border-box; }}
     body {{
@@ -606,15 +731,15 @@ public class MainForm : Form
 <body>
   <div class='card'>
     <div class='spinner'></div>
-    <h2>Buscando sala...</h2>
-    <div class='room-pill'>Sala: {displayCode}</div>
-    <p>Esperando a que tu amigo inicie Lowcord en su PC.<br>Te conectarás automáticamente apenas la sala esté activa.</p>
+    <h2>Buscando canal...</h2>
+    <div class='room-pill'>Canal: #{displayChannel}</div>
+    <p>Esperando a que el anfitrión abra el canal.<br>Te conectarás automáticamente en cuanto esté disponible.</p>
     <div class='actions'>
-      <button onclick='window.chrome.webview.postMessage(""CHANGE_SERVER"")'>Cambiar Sala (F2)</button>
+      <button onclick='window.chrome.webview.postMessage(""CHANGE_CHANNEL"")'>Cambiar Canal (F2)</button>
     </div>
     <div class='status-live'>
       <div class='dot'></div>
-      <span>Reintentando automáticamente cada 3 segundos</span>
+      <span>Reintentando automáticamente cada 2.5s</span>
     </div>
   </div>
 </body>
@@ -627,21 +752,31 @@ public class MainForm : Form
     private void StartAutoRetry()
     {
         StopAutoRetry();
-        _retryTimer = new System.Windows.Forms.Timer { Interval = 3000 };
+        _retryTimer = new System.Windows.Forms.Timer { Interval = 2500 };
         _retryTimer.Tick += async (s, e) =>
         {
-            if (await IsLocalServerRunningAsync() && IsTargetMatchingLocalHost(_serverUrl))
+            var channel = _settings.Channel;
+            var user = _settings.Username;
+            var pass = _settings.Password;
+
+            if (await IsLocalServerRunningAsync() && IsTargetMatchingLocalHost(channel))
             {
                 StopAutoRetry();
-                _webView.Source = new Uri("http://localhost:8080");
+                var hostUrl = $"http://localhost:8080/?room={Uri.EscapeDataString(channel)}&user={Uri.EscapeDataString(user)}&pass={Uri.EscapeDataString(pass)}&autojoin=true";
+                _webView.Source = new Uri(hostUrl);
                 return;
             }
 
-            var resolved = await ResolveInputToUrlAsync(_serverUrl);
-            if (!string.IsNullOrEmpty(resolved) && Uri.TryCreate(resolved, UriKind.Absolute, out var uri))
+            var resolved = await ResolveInputToUrlAsync(channel);
+            if (!string.IsNullOrEmpty(resolved) && Uri.TryCreate(resolved, UriKind.Absolute, out var baseUri))
             {
                 StopAutoRetry();
-                _webView.Source = uri;
+                var sep = resolved.Contains('?') ? "&" : "?";
+                var finalUrl = $"{resolved}{sep}room={Uri.EscapeDataString(channel)}&user={Uri.EscapeDataString(user)}&pass={Uri.EscapeDataString(pass)}&autojoin=true";
+                if (Uri.TryCreate(finalUrl, UriKind.Absolute, out var fullUri))
+                {
+                    _webView.Source = fullUri;
+                }
             }
         };
         _retryTimer.Start();
@@ -657,126 +792,281 @@ public class MainForm : Form
         }
     }
 
-    private void PromptChangeServer(string message = "Ingresa el CÓDIGO de sala (ej: facu) o enlace:")
+    private async Task EnsureHostServerRunningAsync(string channel)
     {
-        using var prompt = new Form
+        if (await IsLocalServerRunningAsync()) return;
+
+        var serverExe = FindServerExecutable();
+        if (!string.IsNullOrEmpty(serverExe) && File.Exists(serverExe))
         {
-            Width = 500,
-            Height = 240,
-            FormBorderStyle = FormBorderStyle.FixedDialog,
-            MaximizeBox = false,
-            MinimizeBox = false,
-            Text = "Conectar a Sala Lowcord",
-            StartPosition = FormStartPosition.CenterParent,
-            BackColor = Color.FromArgb(43, 45, 49),
-            ForeColor = Color.White
-        };
-
-        var label = new Label
-        {
-            Left = 20,
-            Top = 15,
-            Width = 445,
-            Height = 45,
-            Text = message,
-            Font = new Font("Segoe UI", 9.5f)
-        };
-
-        var textBox = new TextBox
-        {
-            Left = 20,
-            Top = 68,
-            Width = 445,
-            Text = _serverUrl,
-            BackColor = Color.FromArgb(30, 31, 34),
-            ForeColor = Color.White,
-            Font = new Font("Segoe UI", 10.5f)
-        };
-
-        var lblStatus = new Label
-        {
-            Left = 20,
-            Top = 105,
-            Width = 445,
-            Height = 25,
-            ForeColor = Color.FromArgb(241, 196, 15),
-            Text = "",
-            Font = new Font("Segoe UI", 9f)
-        };
-
-        var btnOk = new Button
-        {
-            Text = "Conectar",
-            Left = 250,
-            Width = 105,
-            Top = 145,
-            Height = 36,
-            BackColor = Color.FromArgb(88, 101, 242),
-            ForeColor = Color.White,
-            FlatStyle = FlatStyle.Flat,
-            Font = new Font("Segoe UI", 9.5f, FontStyle.Bold)
-        };
-
-        var btnCancel = new Button
-        {
-            Text = "Cancelar",
-            Left = 365,
-            Width = 100,
-            Top = 145,
-            Height = 36,
-            DialogResult = DialogResult.Cancel,
-            BackColor = Color.FromArgb(60, 60, 60),
-            ForeColor = Color.White,
-            FlatStyle = FlatStyle.Flat,
-            Font = new Font("Segoe UI", 9.5f)
-        };
-
-        btnOk.Click += async (s, e) =>
-        {
-            var rawInput = textBox.Text.Trim();
-            if (string.IsNullOrWhiteSpace(rawInput)) return;
-
-            btnOk.Enabled = false;
-            btnCancel.Enabled = false;
-            textBox.Enabled = false;
-            lblStatus.Text = "Buscando sala...";
-
-            _serverUrl = rawInput;
             try
             {
-                File.WriteAllText(_configFile, _serverUrl);
-            }
-            catch { }
-
-            prompt.DialogResult = DialogResult.OK;
-            prompt.Close();
-
-            var resolvedUrl = await ResolveInputToUrlAsync(rawInput);
-            if (!string.IsNullOrEmpty(resolvedUrl) && Uri.TryCreate(resolvedUrl, UriKind.Absolute, out var uri))
-            {
-                StopAutoRetry();
-                if (_webView.CoreWebView2 != null)
+                var psi = new System.Diagnostics.ProcessStartInfo
                 {
-                    _webView.Source = uri;
+                    FileName = serverExe,
+                    WorkingDirectory = Path.GetDirectoryName(serverExe)!,
+                    WindowStyle = System.Diagnostics.ProcessWindowStyle.Hidden,
+                    CreateNoWindow = true,
+                    UseShellExecute = false
+                };
+                System.Diagnostics.Process.Start(psi);
+
+                var cloudflaredExe = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "cloudflared.exe");
+                if (File.Exists(cloudflaredExe))
+                {
+                    var cfLog = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "cloudflared.log");
+                    var cfPsi = new System.Diagnostics.ProcessStartInfo
+                    {
+                        FileName = cloudflaredExe,
+                        Arguments = $"tunnel --url http://localhost:8080 --logfile \"{cfLog}\"",
+                        WorkingDirectory = AppDomain.CurrentDomain.BaseDirectory,
+                        WindowStyle = System.Diagnostics.ProcessWindowStyle.Hidden,
+                        CreateNoWindow = true,
+                        UseShellExecute = false
+                    };
+                    System.Diagnostics.Process.Start(cfPsi);
+
+                    _ = Task.Run(async () =>
+                    {
+                        for (int i = 0; i < 30; i++)
+                        {
+                            await Task.Delay(600);
+                            if (File.Exists(cfLog))
+                            {
+                                var content = await File.ReadAllTextAsync(cfLog);
+                                var match = System.Text.RegularExpressions.Regex.Match(content, @"(https://[a-zA-Z0-9-]+\.trycloudflare\.com)");
+                                if (match.Success)
+                                {
+                                    var tunnelUrl = match.Groups[1].Value;
+                                    var encoded = Uri.EscapeDataString(tunnelUrl);
+                                    await _httpClient.GetStringAsync($"https://api.keyval.org/set/lowcord_{channel}/{encoded}");
+                                    break;
+                                }
+                            }
+                        }
+                    });
                 }
             }
-            else
-            {
-                ShowWaitingScreen(_serverUrl);
-            }
-        };
+            catch { }
+        }
 
-        prompt.Controls.Add(label);
-        prompt.Controls.Add(textBox);
-        prompt.Controls.Add(lblStatus);
-        prompt.Controls.Add(btnOk);
-        prompt.Controls.Add(btnCancel);
-        prompt.AcceptButton = btnOk;
-        prompt.CancelButton = btnCancel;
-
-        prompt.ShowDialog(this);
+        for (int i = 0; i < 15; i++)
+        {
+            if (await IsLocalServerRunningAsync()) break;
+            await Task.Delay(300);
+        }
     }
 
+    private string? FindServerExecutable()
+    {
+        var candidates = new[]
+        {
+            Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Servidor", "Lowcord.Server.exe"),
+            Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "EJECUTABLES_LISTOS", "Servidor", "Lowcord.Server.exe"),
+            Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "..", "..", "EJECUTABLES_LISTOS", "Servidor", "Lowcord.Server.exe"),
+            Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Lowcord.Server.exe")
+        };
+        return candidates.FirstOrDefault(File.Exists);
+    }
+
+    private string? GetLocalRoomCode()
+    {
+        try
+        {
+            var paths = new[]
+            {
+                Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "room_code.txt"),
+                Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "room_code.txt"),
+                Path.Combine(Environment.CurrentDirectory, "room_code.txt"),
+                Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "..", "..", "EJECUTABLES_LISTOS", "room_code.txt")
+            };
+            foreach (var p in paths)
+            {
+                if (File.Exists(p))
+                {
+                    var txt = File.ReadAllText(p).Trim();
+                    if (!string.IsNullOrEmpty(txt)) return txt.ToLowerInvariant();
+                }
+            }
+        }
+        catch { }
+        return null;
+    }
+
+    private bool IsTargetMatchingLocalHost(string target)
+    {
+        if (string.IsNullOrWhiteSpace(target) || target.Contains("localhost") || target.StartsWith("127.0.0.1"))
+            return true;
+
+        var localRoom = GetLocalRoomCode();
+        if (!string.IsNullOrEmpty(localRoom) && string.Equals(target.Trim(), localRoom, StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        return false;
+    }
+
+    // =========================================================
+    // AUTO-UPDATER NATIVO
+    // =========================================================
+    private async Task CheckForUpdatesAsync()
+    {
+        try
+        {
+            using var req = new HttpRequestMessage(HttpMethod.Get, "https://api.github.com/repos/FakuInsa/lowcord/releases/latest");
+            req.Headers.UserAgent.ParseAdd("Lowcord-Client");
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(6));
+            var resp = await _httpClient.SendAsync(req, cts.Token);
+            if (!resp.IsSuccessStatusCode) return;
+
+            var json = await resp.Content.ReadAsStringAsync(cts.Token);
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            if (!root.TryGetProperty("tag_name", out var tagProp)) return;
+
+            var tagName = tagProp.GetString()?.Trim();
+            if (string.IsNullOrEmpty(tagName) || tagName.Equals(APP_VERSION, StringComparison.OrdinalIgnoreCase))
+                return;
+
+            if (IsVersionNewer(tagName, APP_VERSION))
+            {
+                string? downloadUrl = null;
+                if (root.TryGetProperty("assets", out var assetsProp) && assetsProp.ValueKind == JsonValueKind.Array)
+                {
+                    // Prioridad 1: Ejecutable directo Lowcord-Client.exe
+                    foreach (var asset in assetsProp.EnumerateArray())
+                    {
+                        var name = asset.GetProperty("name").GetString() ?? "";
+                        if (name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) && name.Contains("Client", StringComparison.OrdinalIgnoreCase))
+                        {
+                            downloadUrl = asset.GetProperty("browser_download_url").GetString();
+                            break;
+                        }
+                    }
+                    // Prioridad 2: Archivo zip portable
+                    if (downloadUrl == null)
+                    {
+                        foreach (var asset in assetsProp.EnumerateArray())
+                        {
+                            var name = asset.GetProperty("name").GetString() ?? "";
+                            if (name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase) && name.Contains("Client", StringComparison.OrdinalIgnoreCase))
+                            {
+                                downloadUrl = asset.GetProperty("browser_download_url").GetString();
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                if (!string.IsNullOrEmpty(downloadUrl))
+                {
+                    _pendingUpdateUrl = downloadUrl;
+                    _pendingUpdateVersion = tagName;
+
+                    BeginInvoke(() =>
+                    {
+                        try
+                        {
+                            var updatePayload = JsonSerializer.Serialize(new
+                            {
+                                type = "UPDATE_AVAILABLE",
+                                version = tagName,
+                                downloadUrl = downloadUrl
+                            });
+                            _webView.CoreWebView2?.PostWebMessageAsJson(updatePayload);
+                        }
+                        catch { }
+                    });
+                }
+            }
+        }
+        catch { }
+    }
+
+    private static bool IsVersionNewer(string remote, string local)
+    {
+        try
+        {
+            var r = remote.TrimStart('v', 'V').Split('.');
+            var l = local.TrimStart('v', 'V').Split('.');
+            for (int i = 0; i < Math.Max(r.Length, l.Length); i++)
+            {
+                var rNum = i < r.Length && int.TryParse(r[i], out var rn) ? rn : 0;
+                var lNum = i < l.Length && int.TryParse(l[i], out var ln) ? ln : 0;
+                if (rNum > lNum) return true;
+                if (rNum < lNum) return false;
+            }
+        }
+        catch { }
+        return !string.Equals(remote, local, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private async Task ExecuteUpdateAsync()
+    {
+        if (string.IsNullOrEmpty(_pendingUpdateUrl)) return;
+
+        try
+        {
+            var currentExe = Environment.ProcessPath ?? Application.ExecutablePath;
+            var dir = Path.GetDirectoryName(currentExe)!;
+            var tempDownloadFile = Path.Combine(dir, "update_download.tmp");
+
+            using (var req = new HttpRequestMessage(HttpMethod.Get, _pendingUpdateUrl))
+            {
+                req.Headers.UserAgent.ParseAdd("Lowcord-Client");
+                var resp = await _httpClient.SendAsync(req, HttpCompletionOption.ResponseHeadersRead);
+                if (!resp.IsSuccessStatusCode)
+                {
+                    MessageBox.Show("No se pudo descargar la actualización desde GitHub. Intenta nuevamente.", "Aviso de Actualización");
+                    return;
+                }
+
+                await using var srcStream = await resp.Content.ReadAsStreamAsync();
+                await using var fileStream = new FileStream(tempDownloadFile, FileMode.Create, FileAccess.Write, FileShare.None);
+                await srcStream.CopyToAsync(fileStream);
+            }
+
+            string newExePath = tempDownloadFile;
+            if (_pendingUpdateUrl.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+            {
+                var extractFolder = Path.Combine(dir, "extract_" + Guid.NewGuid().ToString("N"));
+                System.IO.Compression.ZipFile.ExtractToDirectory(tempDownloadFile, extractFolder, true);
+                var foundExe = Directory.GetFiles(extractFolder, "*.exe", SearchOption.AllDirectories)
+                    .FirstOrDefault(f => Path.GetFileName(f).Contains("Client", StringComparison.OrdinalIgnoreCase));
+
+                if (foundExe != null)
+                {
+                    newExePath = Path.Combine(dir, "extracted_client.tmp");
+                    File.Copy(foundExe, newExePath, true);
+                }
+                try { Directory.Delete(extractFolder, true); } catch { }
+                try { File.Delete(tempDownloadFile); } catch { }
+            }
+
+            // Reemplazo atómico en Windows
+            var oldExe = currentExe + ".old";
+            if (File.Exists(oldExe)) File.Delete(oldExe);
+
+            File.Move(currentExe, oldExe);
+            File.Move(newExePath, currentExe);
+
+            // Iniciar nueva versión
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = currentExe,
+                UseShellExecute = true
+            });
+
+            Application.Exit();
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Error al actualizar automáticamente: {ex.Message}", "Aviso de Actualización", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+    }
+
+    // =========================================================
+    // ATAJOS GLOBALES DE TECLADO (HOOK)
+    // =========================================================
     private void InstallGlobalKeyboardHook()
     {
         if (_hookId != IntPtr.Zero) return;
@@ -851,31 +1141,26 @@ public class MainForm : Form
         if (string.IsNullOrWhiteSpace(code)) return 0;
         code = code.Trim();
 
-        // Si es una sola letra directa: "A" .. "Z" o "a" .. "z"
         if (code.Length == 1 && char.IsLetter(code[0]))
         {
             return (uint)char.ToUpperInvariant(code[0]);
         }
 
-        // Teclas de letras estándar: KeyA .. KeyZ
         if (code.StartsWith("Key", StringComparison.OrdinalIgnoreCase) && code.Length == 4 && char.IsLetter(code[3]))
         {
             return (uint)char.ToUpperInvariant(code[3]);
         }
 
-        // Teclas numéricas: Digit0 .. Digit9
         if (code.StartsWith("Digit", StringComparison.OrdinalIgnoreCase) && code.Length == 6 && char.IsDigit(code[5]))
         {
             return (uint)(Keys.D0 + (code[5] - '0'));
         }
 
-        // Teclado numérico: Numpad0 .. Numpad9
         if (code.StartsWith("Numpad", StringComparison.OrdinalIgnoreCase) && code.Length == 7 && char.IsDigit(code[6]))
         {
             return (uint)(Keys.NumPad0 + (code[6] - '0'));
         }
 
-        // Teclas de función: F1 .. F24
         if (code.StartsWith("F", StringComparison.OrdinalIgnoreCase) && int.TryParse(code.Substring(1), out int fNum) && fNum >= 1 && fNum <= 24)
         {
             return (uint)(Keys.F1 + (fNum - 1));
@@ -916,4 +1201,3 @@ public class MainForm : Form
         base.OnFormClosing(e);
     }
 }
-

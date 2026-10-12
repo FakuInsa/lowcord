@@ -93,7 +93,17 @@ const rtcConfig = {
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
     { urls: 'stun:stun2.l.google.com:19302' },
-    { urls: 'stun:stun.cloudflare.com:3478' }
+    { urls: 'stun:stun.cloudflare.com:3478' },
+    // Servidores TURN libres para atravesar CGNAT / Firewalls estrictos
+    {
+      urls: [
+        'turn:openrelay.metered.ca:80',
+        'turn:openrelay.metered.ca:443',
+        'turn:openrelay.metered.ca:443?transport=tcp'
+      ],
+      username: 'openrelay',
+      credential: 'openrelay'
+    }
   ],
   iceCandidatePoolSize: 10
 };
@@ -179,7 +189,48 @@ btnToggleAvatars.addEventListener('click', () => {
   btnToggleAvatars.innerText = isHidden ? 'Mostrar participantes' : 'Ocultar participantes';
 });
 
-// Pre-cargar valores de sala y usuario desde URL y localStorage
+// Notificación de actualización desde el cliente nativo
+if (window.chrome && window.chrome.webview) {
+  window.chrome.webview.addEventListener('message', (event) => {
+    try {
+      const data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
+      if (data && data.type === 'UPDATE_AVAILABLE') {
+        showUpdateBanner(data.newVersion || data.version);
+      }
+    } catch (e) {}
+  });
+}
+
+function showUpdateBanner(version) {
+  let banner = document.getElementById('update-notification-banner');
+  if (!banner) {
+    banner = document.createElement('div');
+    banner.id = 'update-notification-banner';
+    banner.className = 'update-banner';
+    banner.innerHTML = `
+      <span>🚀 <b>Nueva versión disponible: ${version}</b></span>
+      <button type="button" class="btn-update-action" id="btn-do-update">Actualizar Ahora</button>
+      <button type="button" class="btn-update-close" id="btn-close-update">&times;</button>
+    `;
+    document.body.appendChild(banner);
+
+    banner.querySelector('#btn-do-update').addEventListener('click', () => {
+      const btn = banner.querySelector('#btn-do-update');
+      btn.disabled = true;
+      btn.innerText = 'Descargando...';
+      if (window.chrome && window.chrome.webview) {
+        window.chrome.webview.postMessage(JSON.stringify({ type: 'EXECUTE_UPDATE' }));
+      }
+    });
+
+    banner.querySelector('#btn-close-update').addEventListener('click', () => {
+      banner.style.display = 'none';
+    });
+  }
+  banner.style.display = 'flex';
+}
+
+// Pre-cargar valores de sala y usuario desde URL y localStorage (con soporte para autojoin)
 (function prefillInputs() {
   try {
     const urlParams = new URLSearchParams(window.location.search);
@@ -188,10 +239,23 @@ btnToggleAvatars.addEventListener('click', () => {
       const roomInput = document.getElementById('room-id');
       if (roomInput) roomInput.value = roomParam;
     }
-    const savedUser = localStorage.getItem('lowcord_username');
+    const savedUser = (urlParams.get('user') || localStorage.getItem('lowcord_username') || '').trim();
     if (savedUser) {
       const userInput = document.getElementById('username');
-      if (userInput && !userInput.value) userInput.value = savedUser;
+      if (userInput) userInput.value = savedUser;
+    }
+    const savedPass = (urlParams.get('pass') || localStorage.getItem('lowcord_room_pass') || '').trim();
+    if (savedPass) {
+      const passInput = document.getElementById('room-password');
+      if (passInput) passInput.value = savedPass;
+    }
+
+    const autoJoin = urlParams.get('autojoin') === 'true';
+    if (autoJoin && roomParam && savedUser) {
+      setTimeout(() => {
+        const btnSubmit = document.getElementById('btn-join');
+        if (btnSubmit) btnSubmit.click();
+      }, 150);
     }
   } catch (e) {}
 })();
@@ -213,6 +277,11 @@ joinForm.addEventListener('submit', async (e) => {
   try {
     localStorage.setItem('lowcord_username', myUserName);
     localStorage.setItem('lowcord_room_id', currentRoomId);
+    if (password) {
+      localStorage.setItem('lowcord_room_pass', password);
+    } else {
+      localStorage.removeItem('lowcord_room_pass');
+    }
   } catch (e) {}
 
   const btnSubmit = document.getElementById('btn-join');
