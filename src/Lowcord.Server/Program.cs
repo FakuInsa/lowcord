@@ -77,6 +77,8 @@ app.MapGet("/api/health", () => Results.Ok(new
     version = "1.0.0"
 }));
 
+app.MapGet("/api/channels", () => Results.Ok(SignalingHub.GetActiveRooms()));
+
 app.MapPost("/api/shutdown", async (IHubContext<SignalingHub> hubContext, IHostApplicationLifetime lifetime) =>
 {
     Console.WriteLine(">> Recibida solicitud de apagado. Notificando a todos los clientes...");

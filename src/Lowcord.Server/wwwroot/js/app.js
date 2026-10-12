@@ -1966,6 +1966,7 @@ window.addEventListener('keydown', (e) => {
       return;
     }
     let code = e.code;
+    let vk = e.keyCode || e.which;
     let label = e.key.toUpperCase();
     if (code.startsWith('Key')) label = code.slice(3);
     else if (code === 'Space') label = 'Espacio';
@@ -1973,8 +1974,9 @@ window.addEventListener('keydown', (e) => {
     else if (code.startsWith('Numpad')) label = 'Num ' + code.slice(6);
     else if (code === 'CapsLock') label = 'Bloq Mayús';
     else if (code === 'Tab') label = 'Tab';
+    else if (code === 'Backquote') label = e.key ? e.key : '|';
 
-    finishKeybindRecording({ code, label });
+    finishKeybindRecording({ code, vk, label });
     return;
   }
 
@@ -2050,14 +2052,16 @@ if (window.chrome && window.chrome.webview) {
   });
 }
 
-function syncHotkeyWithNativeClient(code) {
+function syncHotkeyWithNativeClient(code, vk) {
   if (window.chrome && window.chrome.webview) {
     try {
+      const numericVk = vk || parseInt(localStorage.getItem('lowcord_keybind_vk') || '0', 10);
       window.chrome.webview.postMessage({
         type: 'UPDATE_HOTKEY',
-        code: code
+        code: code,
+        vk: numericVk
       });
-      console.log(`[Lowcord] Hotkey sincronizado con cliente nativo: ${code}`);
+      console.log(`[Lowcord] Hotkey sincronizado con cliente nativo: ${code} (vk: ${numericVk})`);
     } catch (e) {
       console.warn('Error al sincronizar hotkey con C#:', e);
     }
@@ -2065,7 +2069,7 @@ function syncHotkeyWithNativeClient(code) {
 }
 
 // Sincronizar hotkey guardado con el cliente nativo C# apenas carga la página
-syncHotkeyWithNativeClient(activeKeybind.code);
+syncHotkeyWithNativeClient(activeKeybind.code, parseInt(localStorage.getItem('lowcord_keybind_vk') || '0', 10));
 
 // Configuración avanzada de la UI
 let advancedAudioSettingsInitialized = false;
@@ -2155,7 +2159,10 @@ function finishKeybindRecording(newKeybind) {
     activeKeybind = newKeybind;
     localStorage.setItem('lowcord_keybind_code', newKeybind.code);
     localStorage.setItem('lowcord_keybind_label', newKeybind.label);
-    syncHotkeyWithNativeClient(newKeybind.code);
+    if (newKeybind.vk) {
+      localStorage.setItem('lowcord_keybind_vk', newKeybind.vk);
+    }
+    syncHotkeyWithNativeClient(newKeybind.code, newKeybind.vk);
   }
 
   keybindDisplayText.innerText = activeKeybind.label;

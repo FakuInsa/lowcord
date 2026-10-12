@@ -9,9 +9,11 @@ namespace Lowcord.Client;
 public class ClientSettings
 {
     public string Username { get; set; } = "";
+    public string ServerCode { get; set; } = "facu";
     public string Channel { get; set; } = "general";
     public string Password { get; set; } = "";
-    public bool IsHost { get; set; } = false;
+    public uint HotkeyVk { get; set; } = (uint)Keys.M;
+    public string HotkeyCode { get; set; } = "KeyM";
 }
 
 public class MainForm : Form
@@ -53,6 +55,7 @@ public class MainForm : Form
     private System.Windows.Forms.Timer? _retryTimer;
     private string? _pendingUpdateUrl = null;
     private string? _pendingUpdateVersion = null;
+    private string? _cachedTunnelUrl = null;
 
     public MainForm()
     {
@@ -64,8 +67,17 @@ public class MainForm : Form
         catch { }
 
         LoadSettings();
+        if (_settings.HotkeyVk > 0)
+        {
+            _targetVk = _settings.HotkeyVk;
+        }
+
         InitializeComponent();
         InstallGlobalKeyboardHook();
+
+        // Si existen los archivos del servidor local en esta PC, iniciarlo automáticamente
+        _ = AutoStartHostIfPresentAsync();
+
         _ = InitializeWebViewAsync();
     }
 
@@ -104,8 +116,14 @@ public class MainForm : Form
                 var saved = File.ReadAllText(_configFile).Trim();
                 if (!string.IsNullOrEmpty(saved))
                 {
-                    _settings.Channel = saved;
+                    _settings.ServerCode = saved;
                 }
+            }
+
+            var localRoom = GetLocalRoomCode();
+            if (!string.IsNullOrEmpty(localRoom) && string.IsNullOrEmpty(_settings.ServerCode))
+            {
+                _settings.ServerCode = localRoom;
             }
         }
         catch { }
@@ -117,7 +135,7 @@ public class MainForm : Form
         {
             var json = JsonSerializer.Serialize(_settings, new JsonSerializerOptions { WriteIndented = true });
             File.WriteAllText(_settingsFile, json);
-            File.WriteAllText(_configFile, _settings.Channel);
+            File.WriteAllText(_configFile, _settings.ServerCode);
         }
         catch { }
     }
@@ -175,7 +193,7 @@ public class MainForm : Form
             _webView.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
             _webView.CoreWebView2.Settings.IsStatusBarEnabled = false;
 
-            // Escuchar mensajes del cliente web
+            // Escuchar mensajes del frontend
             _webView.CoreWebView2.WebMessageReceived += (sender, args) =>
             {
                 try
@@ -185,10 +203,7 @@ public class MainForm : Form
                     {
                         msgString = args.TryGetWebMessageAsString();
                     }
-                    catch
-                    {
-                        // Si el mensaje viene como objeto JSON puro
-                    }
+                    catch { }
 
                     if (!string.IsNullOrEmpty(msgString))
                     {
@@ -207,6 +222,28 @@ public class MainForm : Form
                             BeginInvoke(async () => await ExecuteUpdateAsync());
                             return;
                         }
+                        if (msgString.StartsWith("SET_NAME:"))
+                        {
+                            var newName = msgString.Substring("SET_NAME:".Length).Trim();
+                            if (!string.IsNullOrEmpty(newName))
+                            {
+                                _settings.Username = newName;
+                                SaveSettings();
+                                BeginInvoke(() => ShowConnectScreen());
+                            }
+                            return;
+                        }
+                        if (msgString.StartsWith("SET_SERVER_CODE:"))
+                        {
+                            var newCode = msgString.Substring("SET_SERVER_CODE:".Length).Trim().ToLowerInvariant();
+                            if (!string.IsNullOrEmpty(newCode))
+                            {
+                                _settings.ServerCode = newCode;
+                                SaveSettings();
+                                BeginInvoke(() => ShowConnectScreen());
+                            }
+                            return;
+                        }
                         if (msgString.StartsWith("CONNECT_CHANNEL:"))
                         {
                             var jsonPayload = msgString.Substring("CONNECT_CHANNEL:".Length).Trim();
@@ -214,10 +251,16 @@ public class MainForm : Form
                             {
                                 using var doc = JsonDocument.Parse(jsonPayload);
                                 var root = doc.RootElement;
-                                _settings.Username = root.TryGetProperty("user", out var u) ? u.GetString() ?? "" : "";
+                                if (root.TryGetProperty("user", out var u) && !string.IsNullOrEmpty(u.GetString()))
+                                {
+                                    _settings.Username = u.GetString()!.Trim();
+                                }
+                                if (root.TryGetProperty("server", out var s) && !string.IsNullOrEmpty(s.GetString()))
+                                {
+                                    _settings.ServerCode = s.GetString()!.Trim().ToLowerInvariant();
+                                }
                                 _settings.Channel = (root.TryGetProperty("channel", out var c) ? c.GetString() ?? "general" : "general").Trim().ToLowerInvariant();
                                 _settings.Password = root.TryGetProperty("pass", out var p) ? p.GetString() ?? "" : "";
-                                _settings.IsHost = root.TryGetProperty("isHost", out var h) && h.GetBoolean();
                                 SaveSettings();
 
                                 BeginInvoke(async () => await ConnectToChannelAsync());
@@ -234,11 +277,7 @@ public class MainForm : Form
                     }
                     else
                     {
-                        try
-                        {
-                            rawJson = args.WebMessageAsJson;
-                        }
-                        catch { }
+                        try { rawJson = args.WebMessageAsJson; } catch { }
                     }
 
                     if (!string.IsNullOrWhiteSpace(rawJson))
@@ -250,9 +289,20 @@ public class MainForm : Form
                             if (root.TryGetProperty("type", out var typeProp))
                             {
                                 var type = typeProp.GetString();
-                                if (type == "UPDATE_HOTKEY" && root.TryGetProperty("code", out var codeProp))
+                                if (type == "UPDATE_HOTKEY")
                                 {
-                                    UpdateGlobalHotkey(codeProp.GetString());
+                                    if (root.TryGetProperty("vk", out var vkProp) && vkProp.GetInt32() > 0)
+                                    {
+                                        _targetVk = (uint)vkProp.GetInt32();
+                                        _settings.HotkeyVk = _targetVk;
+                                    }
+                                    if (root.TryGetProperty("code", out var codeProp))
+                                    {
+                                        var code = codeProp.GetString();
+                                        _settings.HotkeyCode = code ?? "KeyM";
+                                        if (_targetVk == 0) UpdateGlobalHotkey(code);
+                                    }
+                                    SaveSettings();
                                 }
                                 else if (type == "EXECUTE_UPDATE")
                                 {
@@ -265,19 +315,19 @@ public class MainForm : Form
                 catch { }
             };
 
-            // Reintento automático en caso de pérdida de conexión
+            // Reintento en caso de navegación fallida
             _webView.NavigationCompleted += (sender, args) =>
             {
                 if (!args.IsSuccess && args.WebErrorStatus != CoreWebView2WebErrorStatus.OperationCanceled)
                 {
-                    ShowWaitingScreen(_settings.Channel);
+                    ShowWaitingScreen(_settings.ServerCode, _settings.Channel);
                 }
             };
 
-            // Comprobar actualizaciones en segundo plano al iniciar
+            // Comprobar actualizaciones en segundo plano
             _ = Task.Run(async () => await CheckForUpdatesAsync());
 
-            // Mostrar pantalla inicial de canal y contraseña
+            // Mostrar pantalla inicial
             ShowConnectScreen();
         }
         catch (Exception ex)
@@ -291,11 +341,89 @@ public class MainForm : Form
         }
     }
 
+    private async Task AutoStartHostIfPresentAsync()
+    {
+        var serverExe = FindServerExecutable();
+        if (string.IsNullOrEmpty(serverExe) || !File.Exists(serverExe))
+        {
+            return; // Esta máquina es cliente puro (amigo)
+        }
+
+        // 1. Iniciar Lowcord.Server si no está corriendo
+        if (!await IsLocalServerRunningAsync())
+        {
+            try
+            {
+                var psi = new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = serverExe,
+                    WorkingDirectory = Path.GetDirectoryName(serverExe)!,
+                    WindowStyle = System.Diagnostics.ProcessWindowStyle.Hidden,
+                    CreateNoWindow = true,
+                    UseShellExecute = false
+                };
+                System.Diagnostics.Process.Start(psi);
+            }
+            catch { }
+        }
+
+        // 2. Iniciar cloudflared tunnel si existe
+        var cloudflaredExe = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "cloudflared.exe");
+        if (File.Exists(cloudflaredExe))
+        {
+            var cfLog = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "cloudflared.log");
+            try
+            {
+                var runningCf = System.Diagnostics.Process.GetProcessesByName("cloudflared");
+                if (runningCf.Length == 0)
+                {
+                    var cfPsi = new System.Diagnostics.ProcessStartInfo
+                    {
+                        FileName = cloudflaredExe,
+                        Arguments = $"tunnel --url http://localhost:8080 --logfile \"{cfLog}\"",
+                        WorkingDirectory = AppDomain.CurrentDomain.BaseDirectory,
+                        WindowStyle = System.Diagnostics.ProcessWindowStyle.Hidden,
+                        CreateNoWindow = true,
+                        UseShellExecute = false
+                    };
+                    System.Diagnostics.Process.Start(cfPsi);
+                }
+            }
+            catch { }
+
+            // 3. Monitorear el túnel y publicar en segundo plano
+            _ = Task.Run(async () =>
+            {
+                var roomCode = string.IsNullOrWhiteSpace(_settings.ServerCode) ? "facu" : _settings.ServerCode;
+                for (int i = 0; i < 40; i++)
+                {
+                    await Task.Delay(800);
+                    if (File.Exists(cfLog))
+                    {
+                        try
+                        {
+                            var content = await File.ReadAllTextAsync(cfLog);
+                            var match = System.Text.RegularExpressions.Regex.Match(content, @"(https://[a-zA-Z0-9-]+\.trycloudflare\.com)");
+                            if (match.Success)
+                            {
+                                _cachedTunnelUrl = match.Groups[1].Value;
+                                var encoded = Uri.EscapeDataString(_cachedTunnelUrl);
+                                await _httpClient.GetStringAsync($"https://api.keyval.org/set/lowcord_{roomCode}/{encoded}");
+                                break;
+                            }
+                        }
+                        catch { }
+                    }
+                }
+            });
+        }
+    }
+
     private async Task<bool> IsLocalServerRunningAsync()
     {
         try
         {
-            using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(450));
+            using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(400));
             var resp = await _httpClient.GetAsync("http://localhost:8080/api/health", cts.Token);
             return resp.IsSuccessStatusCode;
         }
@@ -321,10 +449,16 @@ public class MainForm : Form
             return "http://" + input;
         }
 
+        // Si este equipo es el host y el código coincide con el local
+        if (await IsLocalServerRunningAsync() && IsTargetMatchingLocalHost(input))
+        {
+            return "http://localhost:8080";
+        }
+
         var code = input.ToLowerInvariant();
         try
         {
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3.5));
             var res = await _httpClient.GetStringAsync($"https://api.keyval.org/get/lowcord_{code}", cts.Token);
             using var doc = JsonDocument.Parse(res);
             if (doc.RootElement.TryGetProperty("val", out var valProp))
@@ -343,31 +477,456 @@ public class MainForm : Form
         return null;
     }
 
-    private void ShowConnectScreen()
+    private async Task<string> FetchChannelsJsonAsync(string baseUrl)
+    {
+        try
+        {
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2.5));
+            var cleanBase = baseUrl.TrimEnd('/');
+            var json = await _httpClient.GetStringAsync($"{cleanBase}/api/channels", cts.Token);
+            return json;
+        }
+        catch
+        {
+            return "[]";
+        }
+    }
+
+    private async void ShowConnectScreen()
     {
         StopAutoRetry();
 
+        // 1. Si no tiene nombre guardado, pedir nombre (una sola vez para siempre)
+        if (string.IsNullOrWhiteSpace(_settings.Username))
+        {
+            ShowAskNameScreen();
+            return;
+        }
+
+        // 2. Determinar estado del servidor (local o remoto)
+        var isLocal = await IsLocalServerRunningAsync();
+        var serverCode = System.Net.WebUtility.HtmlEncode(_settings.ServerCode);
         var safeUser = System.Net.WebUtility.HtmlEncode(_settings.Username);
-        var safeChannel = System.Net.WebUtility.HtmlEncode(_settings.Channel);
         var safePass = System.Net.WebUtility.HtmlEncode(_settings.Password);
-        var hostChecked = _settings.IsHost ? "checked" : "";
+
+        // Obtener canales activos
+        string channelsJson = "[]";
+        if (isLocal)
+        {
+            channelsJson = await FetchChannelsJsonAsync("http://localhost:8080");
+        }
+        else
+        {
+            var resolved = await ResolveInputToUrlAsync(_settings.ServerCode);
+            if (!string.IsNullOrEmpty(resolved))
+            {
+                channelsJson = await FetchChannelsJsonAsync(resolved);
+            }
+        }
 
         var updateHtml = "";
         if (!string.IsNullOrEmpty(_pendingUpdateVersion))
         {
             updateHtml = $@"
         <div class='update-alert'>
-          <span>🚀 <b>Actualización lista ({_pendingUpdateVersion})</b></span>
+          <span>🚀 <b>Nueva versión disponible: {_pendingUpdateVersion}</b></span>
           <button type='button' class='btn-mini-update' onclick='window.chrome.webview.postMessage(""EXECUTE_UPDATE"")'>Actualizar Ahora</button>
         </div>";
         }
+
+        var shareLink = $"https://fakuinsa.github.io/lowcord/?room={_settings.ServerCode}";
 
         var html = $@"
 <!DOCTYPE html>
 <html>
 <head>
   <meta charset='utf-8'>
-  <title>Entrar a Lowcord</title>
+  <title>Canales de Lowcord</title>
+  <style>
+    * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+    body {{
+      background: linear-gradient(135deg, #111214 0%, #1e1f22 100%);
+      color: #f2f3f5;
+      font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      user-select: none;
+      padding: 16px;
+    }}
+    .card {{
+      background: #2b2d31;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 16px;
+      padding: 26px 28px;
+      width: 480px;
+      max-width: 95vw;
+      box-shadow: 0 16px 40px rgba(0,0,0,0.5);
+    }}
+    .header-row {{
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 18px;
+      padding-bottom: 14px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    }}
+    .brand {{
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }}
+    .brand-logo {{
+      width: 36px;
+      height: 36px;
+      background: linear-gradient(135deg, #5865F2 0%, #4752c4 100%);
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }}
+    .brand-logo svg {{ width: 20px; height: 20px; fill: #fff; }}
+    .brand-title {{
+      font-size: 18px;
+      font-weight: 700;
+      color: #fff;
+    }}
+    .user-pill {{
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: #1e1f22;
+      padding: 6px 12px;
+      border-radius: 20px;
+      font-size: 13px;
+      color: #dbdee1;
+    }}
+    .btn-edit-user {{
+      background: transparent;
+      border: none;
+      color: #5865F2;
+      font-weight: 600;
+      cursor: pointer;
+      font-size: 12px;
+    }}
+    .btn-edit-user:hover {{ text-decoration: underline; }}
+    
+    .server-bar {{
+      background: #1e1f22;
+      border-radius: 10px;
+      padding: 10px 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 18px;
+      font-size: 13px;
+    }}
+    .server-info {{
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }}
+    .server-dot {{
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: {(isLocal ? "#23a55a" : "#f0b232")};
+    }}
+    .server-input-box {{
+      background: #2b2d31;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 6px;
+      color: #fff;
+      font-size: 12.5px;
+      font-weight: 600;
+      padding: 4px 8px;
+      width: 100px;
+      outline: none;
+      text-align: center;
+    }}
+    .btn-action-small {{
+      background: #5865F2;
+      color: #fff;
+      border: none;
+      padding: 5px 12px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+    }}
+    .btn-action-small:hover {{ background: #4752c4; }}
+
+    .section-title {{
+      font-size: 12px;
+      font-weight: 700;
+      color: #949ba4;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }}
+    
+    .channels-list {{
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-bottom: 18px;
+      max-height: 220px;
+      overflow-y: auto;
+    }}
+    .channel-item {{
+      background: #1e1f22;
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      border-radius: 8px;
+      padding: 11px 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }}
+    .channel-item:hover {{
+      background: #35373c;
+      border-color: rgba(255, 255, 255, 0.15);
+      transform: translateX(2px);
+    }}
+    .channel-name {{
+      font-weight: 600;
+      font-size: 14.5px;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+    }}
+    .channel-badge {{
+      font-size: 12px;
+      color: #949ba4;
+    }}
+    .channel-badge.active {{
+      color: #23a55a;
+      font-weight: 600;
+    }}
+    .btn-join-ch {{
+      background: #5865F2;
+      color: #fff;
+      border: none;
+      padding: 5px 12px;
+      border-radius: 6px;
+      font-size: 12.5px;
+      font-weight: 600;
+      cursor: pointer;
+    }}
+
+    .create-box {{
+      background: #1e1f22;
+      border-radius: 10px;
+      padding: 12px 14px;
+      margin-top: 10px;
+    }}
+    .create-row {{
+      display: flex;
+      gap: 8px;
+      margin-top: 8px;
+    }}
+    .input-ch {{
+      flex: 1;
+      background: #2b2d31;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 6px;
+      color: #fff;
+      padding: 7px 10px;
+      font-size: 13px;
+      outline: none;
+    }}
+    .input-ch:focus {{ border-color: #5865F2; }}
+    
+    .update-alert {{
+      background: rgba(88, 101, 242, 0.2);
+      border: 1px solid #5865F2;
+      border-radius: 8px;
+      padding: 8px 12px;
+      margin-bottom: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 12.5px;
+    }}
+    .btn-mini-update {{
+      background: #5865F2;
+      color: #fff;
+      border: none;
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-size: 11.5px;
+      font-weight: 600;
+      cursor: pointer;
+    }}
+    .footer-note {{
+      text-align: center;
+      color: #80848e;
+      font-size: 11px;
+      margin-top: 14px;
+    }}
+  </style>
+</head>
+<body>
+  <div class='card'>
+    {updateHtml}
+
+    <div class='header-row'>
+      <div class='brand'>
+        <div class='brand-logo'>
+          <svg viewBox='0 0 24 24'><path d='M12 3a9 9 0 0 0-9 9v7a3 3 0 0 0 3 3h1a1 1 0 0 0 1-1v-6a1 1 0 0 0-1-1H5v-3a7 7 0 1 1 14 0v3h-2a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h1a3 3 0 0 0 3-3v-7a9 9 0 0 0-9-9z'/></svg>
+        </div>
+        <div>
+          <div class='brand-title'>Lowcord</div>
+        </div>
+      </div>
+      <div class='user-pill'>
+        <span>👤 <b>{safeUser}</b></span>
+        <button type='button' class='btn-edit-user' onclick='editName()'>Cambiar</button>
+      </div>
+    </div>
+
+    <!-- Barra de Servidor / Sala -->
+    <div class='server-bar'>
+      <div class='server-info'>
+        <div class='server-dot'></div>
+        <span>Servidor:</span>
+        <input type='text' id='serverInput' class='server-input-box' value='{serverCode}' onchange='updateServerCode(this.value)'>
+      </div>
+      <button type='button' class='btn-action-small' onclick='copyShare()'>Copiar Enlace</button>
+    </div>
+
+    <!-- Lista de Canales Disponibles -->
+    <div class='section-title'>
+      <span>Canales de Voz Disponibles</span>
+      <span style='cursor: pointer; color: #5865F2;' onclick='window.location.reload()'>↻ Actualizar</span>
+    </div>
+
+    <div class='channels-list' id='channelsContainer'>
+      <!-- Renderizado dinámicamente con JS -->
+    </div>
+
+    <!-- Crear / Entrar a otro canal -->
+    <div class='create-box'>
+      <div style='font-size: 12px; font-weight: 600; color: #b5bac1;'>+ Crear o entrar a un canal con clave:</div>
+      <form onsubmit='createAndJoin(event)' class='create-row'>
+        <input type='text' id='customChName' class='input-ch' placeholder='Nombre del canal (ej: tarkov)' required>
+        <input type='password' id='customChPass' class='input-ch' placeholder='Clave (opcional)' style='max-width: 130px;'>
+        <button type='submit' class='btn-action-small'>Entrar</button>
+      </form>
+    </div>
+
+    <div class='footer-note'>
+      {APP_VERSION} • Atajo global para mutearte activo • Pulsa F2 para volver aquí
+    </div>
+  </div>
+
+  <script>
+    var currentChannels = {channelsJson};
+    var currentUser = '{safeUser}';
+    var currentServer = '{serverCode}';
+
+    function renderChannels() {{
+      var container = document.getElementById('channelsContainer');
+      container.innerHTML = '';
+
+      // Si no hay canales activos creados en el servidor, mostrar al menos 'general'
+      var list = (currentChannels && currentChannels.length > 0) ? currentChannels : [
+        {{ roomId: 'general', userCount: 0, users: [], hasPassword: false }},
+        {{ roomId: 'tarkov', userCount: 0, users: [], hasPassword: false }}
+      ];
+
+      list.forEach(function(ch) {{
+        var item = document.createElement('div');
+        item.className = 'channel-item';
+
+        var userLabel = ch.userCount > 0 ? (ch.userCount + ' conectado' + (ch.userCount > 1 ? 's' : '') + ': ' + (ch.users || []).join(', ')) : 'Canal libre';
+        var badgeClass = ch.userCount > 0 ? 'channel-badge active' : 'channel-badge';
+        var lockIcon = ch.hasPassword ? ' 🔒' : '';
+
+        item.innerHTML = `
+          <div>
+            <div class='channel-name'>🔊 #${{ch.roomId}}${{lockIcon}}</div>
+            <div class='${{badgeClass}}'>${{userLabel}}</div>
+          </div>
+          <button type='button' class='btn-join-ch'>Entrar</button>
+        `;
+
+        item.addEventListener('click', function() {{
+          var pass = '';
+          if (ch.hasPassword) {{
+            pass = prompt('Ingresa la contraseña para #' + ch.roomId + ':') || '';
+          }}
+          joinChannel(ch.roomId, pass);
+        }});
+
+        container.appendChild(item);
+      }});
+    }}
+
+    function joinChannel(channelName, pass) {{
+      var payload = JSON.stringify({{
+        user: currentUser,
+        server: currentServer,
+        channel: channelName,
+        pass: pass || ''
+      }});
+      window.chrome.webview.postMessage('CONNECT_CHANNEL:' + payload);
+    }}
+
+    function createAndJoin(e) {{
+      e.preventDefault();
+      var ch = (document.getElementById('customChName').value || '').trim().toLowerCase();
+      var pass = (document.getElementById('customChPass').value || '').trim();
+      if (ch) {{
+        joinChannel(ch, pass);
+      }}
+    }}
+
+    function editName() {{
+      var n = prompt('Ingresa tu nuevo Apodo / Nombre:', currentUser);
+      if (n && n.trim()) {{
+        window.chrome.webview.postMessage('SET_NAME:' + n.trim());
+      }}
+    }}
+
+    function updateServerCode(code) {{
+      if (code && code.trim()) {{
+        window.chrome.webview.postMessage('SET_SERVER_CODE:' + code.trim());
+      }}
+    }}
+
+    function copyShare() {{
+      var link = '{shareLink}';
+      navigator.clipboard.writeText(link).then(function() {{
+        alert('Enlace copiado al portapapeles:\n' + link + '\n\nPásaselo a tus amigos para que entren directo.');
+      }}).catch(function() {{
+        prompt('Copia este enlace para tus amigos:', link);
+      }});
+    }}
+
+    renderChannels();
+  </script>
+</body>
+</html>";
+
+        _webView.NavigateToString(html);
+    }
+
+    private void ShowAskNameScreen()
+    {
+        var html = $@"
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset='utf-8'>
+  <title>Bienvenido a Lowcord</title>
   <style>
     * {{ box-sizing: border-box; margin: 0; padding: 0; }}
     body {{
@@ -386,84 +945,50 @@ public class MainForm : Form
       background: #2b2d31;
       border: 1px solid rgba(255, 255, 255, 0.08);
       border-radius: 16px;
-      padding: 34px 30px;
-      width: 420px;
+      padding: 38px 34px;
+      width: 400px;
       max-width: 95vw;
       text-align: center;
       box-shadow: 0 16px 40px rgba(0,0,0,0.5);
-      position: relative;
     }}
     .logo {{
-      width: 56px;
-      height: 56px;
+      width: 60px;
+      height: 60px;
       background: linear-gradient(135deg, #5865F2 0%, #4752c4 100%);
-      border-radius: 16px;
-      margin: 0 auto 16px auto;
+      border-radius: 18px;
+      margin: 0 auto 18px auto;
       display: flex;
       align-items: center;
       justify-content: center;
       box-shadow: 0 6px 20px rgba(88, 101, 242, 0.35);
     }}
-    .logo svg {{ width: 30px; height: 30px; fill: #fff; }}
+    .logo svg {{ width: 34px; height: 34px; fill: #fff; }}
     h2 {{
-      margin-bottom: 6px;
+      margin-bottom: 8px;
       font-size: 22px;
       font-weight: 700;
       color: #fff;
     }}
-    p.desc {{
+    p {{
       color: #949ba4;
-      font-size: 13px;
+      font-size: 13.5px;
       line-height: 1.4;
       margin-bottom: 22px;
     }}
-    .form-group {{
-      text-align: left;
-      margin-bottom: 15px;
-    }}
-    label {{
-      display: block;
-      color: #b5bac1;
-      font-size: 12px;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-      margin-bottom: 6px;
-    }}
     .input-box {{
       width: 100%;
-      padding: 11px 13px;
+      padding: 12px 14px;
       background: #1e1f22;
-      border: 1px solid rgba(255, 255, 255, 0.12);
+      border: 1px solid rgba(255, 255, 255, 0.15);
       border-radius: 8px;
       color: #fff;
-      font-size: 14.5px;
-      font-weight: 500;
+      font-size: 15px;
+      font-weight: 600;
+      text-align: center;
+      margin-bottom: 18px;
       outline: none;
-      transition: border-color 0.15s;
     }}
-    .input-box:focus {{
-      border-color: #5865F2;
-    }}
-    .toggle-row {{
-      display: flex;
-      align-items: center;
-      gap: 9px;
-      margin: 16px 0 20px 0;
-      cursor: pointer;
-      text-align: left;
-    }}
-    .toggle-row input {{
-      width: 16px;
-      height: 16px;
-      accent-color: #5865F2;
-      cursor: pointer;
-    }}
-    .toggle-row span {{
-      color: #dbdee1;
-      font-size: 13px;
-      font-weight: 500;
-    }}
+    .input-box:focus {{ border-color: #5865F2; }}
     .btn {{
       width: 100%;
       background: #5865F2;
@@ -474,100 +999,30 @@ public class MainForm : Form
       font-size: 15px;
       font-weight: 600;
       cursor: pointer;
-      transition: background 0.15s, transform 0.05s;
+      transition: background 0.15s;
     }}
     .btn:hover {{ background: #4752c4; }}
-    .btn:active {{ transform: scale(0.99); }}
-    .footer-note {{
-      margin-top: 18px;
-      color: #80848e;
-      font-size: 11.5px;
-    }}
-    .update-alert {{
-      background: rgba(88, 101, 242, 0.2);
-      border: 1px solid #5865F2;
-      border-radius: 8px;
-      padding: 9px 12px;
-      margin-bottom: 16px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      font-size: 12.5px;
-      color: #dbdee1;
-    }}
-    .btn-mini-update {{
-      background: #5865F2;
-      color: #fff;
-      border: none;
-      padding: 4px 10px;
-      border-radius: 6px;
-      font-size: 11.5px;
-      font-weight: 600;
-      cursor: pointer;
-    }}
-    .btn-mini-update:hover {{ background: #4752c4; }}
   </style>
 </head>
 <body>
   <div class='card'>
-    {updateHtml}
     <div class='logo'>
       <svg viewBox='0 0 24 24'><path d='M12 3a9 9 0 0 0-9 9v7a3 3 0 0 0 3 3h1a1 1 0 0 0 1-1v-6a1 1 0 0 0-1-1H5v-3a7 7 0 1 1 14 0v3h-2a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h1a3 3 0 0 0 3-3v-7a9 9 0 0 0-9-9z'/></svg>
     </div>
-    <h2>Lowcord</h2>
-    <p class='desc'>Chat de voz y pantalla compartida P2P ultra-ligero</p>
-
-    <form onsubmit='handleConnect(event)'>
-      <div class='form-group'>
-        <label>Tu Nombre o Apodo</label>
-        <input type='text' id='userInput' class='input-box' value='{safeUser}' placeholder='Ej: Faku' required autocomplete='off' autofocus>
-      </div>
-
-      <div class='form-group'>
-        <label>Nombre del Canal</label>
-        <input type='text' id='channelInput' class='input-box' value='{safeChannel}' placeholder='Ej: tarkov, squad' required autocomplete='off'>
-      </div>
-
-      <div class='form-group'>
-        <label>Contraseña del Canal</label>
-        <input type='password' id='passInput' class='input-box' value='{safePass}' placeholder='Clave de acceso (opcional)' autocomplete='off'>
-      </div>
-
-      <label class='toggle-row'>
-        <input type='checkbox' id='hostCheck' {hostChecked}>
-        <span>Soy el Anfitrión (Alojar este canal en mi PC)</span>
-      </label>
-
-      <button type='submit' class='btn' id='btnSubmit'>Entrar al Canal</button>
+    <h2>¿Cómo te llamas?</h2>
+    <p>Ingresa tu apodo o nombre para comenzar (solo te lo pediremos esta vez):</p>
+    <form onsubmit='submitName(event)'>
+      <input type='text' id='nameInput' class='input-box' placeholder='Tu Apodo (ej: Faku)' required autofocus maxlength='25' autocomplete='off'>
+      <button type='submit' class='btn'>Guardar y Continuar</button>
     </form>
-
-    <div class='footer-note'>
-      {APP_VERSION} • Cero lag • Atajo global (M) • Presiona F2 para cambiar de canal
-    </div>
   </div>
-
   <script>
-    function handleConnect(e) {{
+    function submitName(e) {{
       e.preventDefault();
-      var user = (document.getElementById('userInput').value || '').trim();
-      var channel = (document.getElementById('channelInput').value || '').trim().toLowerCase();
-      var pass = (document.getElementById('passInput').value || '').trim();
-      var isHost = document.getElementById('hostCheck').checked;
-
-      if (!user || !channel) return;
-
-      var btn = document.getElementById('btnSubmit');
-      btn.disabled = true;
-      btn.innerText = 'Conectando...';
-
-      var payload = JSON.stringify({{
-        user: user,
-        channel: channel,
-        pass: pass,
-        isHost: isHost
-      }});
-
-      window.chrome.webview.postMessage('CONNECT_CHANNEL:' + payload);
+      var val = (document.getElementById('nameInput').value || '').trim();
+      if (val) {{
+        window.chrome.webview.postMessage('SET_NAME:' + val);
+      }}
     }}
   </script>
 </body>
@@ -580,29 +1035,21 @@ public class MainForm : Form
     {
         StopAutoRetry();
 
+        var serverCode = _settings.ServerCode;
         var channel = _settings.Channel;
         var user = _settings.Username;
         var pass = _settings.Password;
 
-        // 1. Modo anfitrión (Host)
-        if (_settings.IsHost)
-        {
-            await EnsureHostServerRunningAsync(channel);
-            var hostUrl = $"http://localhost:8080/?room={Uri.EscapeDataString(channel)}&user={Uri.EscapeDataString(user)}&pass={Uri.EscapeDataString(pass)}&autojoin=true";
-            _webView.Source = new Uri(hostUrl);
-            return;
-        }
-
-        // 2. Si el servidor local ya está activo y coincide con este canal
-        if (await IsLocalServerRunningAsync() && IsTargetMatchingLocalHost(channel))
+        // 1. Si el servidor local está activo y coincide con este código
+        if (await IsLocalServerRunningAsync() && IsTargetMatchingLocalHost(serverCode))
         {
             var hostUrl = $"http://localhost:8080/?room={Uri.EscapeDataString(channel)}&user={Uri.EscapeDataString(user)}&pass={Uri.EscapeDataString(pass)}&autojoin=true";
             _webView.Source = new Uri(hostUrl);
             return;
         }
 
-        // 3. Cliente remoto: resolver canal
-        var resolved = await ResolveInputToUrlAsync(channel);
+        // 2. Cliente remoto: resolver servidor
+        var resolved = await ResolveInputToUrlAsync(serverCode);
         if (!string.IsNullOrEmpty(resolved) && Uri.TryCreate(resolved, UriKind.Absolute, out var baseUri))
         {
             var sep = resolved.Contains('?') ? "&" : "?";
@@ -614,20 +1061,21 @@ public class MainForm : Form
             }
         }
 
-        // 4. Si el canal aún no está online, mostrar espera con reintento automático
-        ShowWaitingScreen(channel);
+        // 3. Si aún no está online, pantalla de espera
+        ShowWaitingScreen(serverCode, channel);
     }
 
-    private void ShowWaitingScreen(string channel)
+    private void ShowWaitingScreen(string serverCode, string channel)
     {
-        var displayChannel = string.IsNullOrWhiteSpace(channel) ? "-" : channel;
+        var displayServer = string.IsNullOrWhiteSpace(serverCode) ? "-" : serverCode;
+        var displayChannel = string.IsNullOrWhiteSpace(channel) ? "general" : channel;
 
         var html = $@"
 <!DOCTYPE html>
 <html>
 <head>
   <meta charset='utf-8'>
-  <title>Conectando al canal...</title>
+  <title>Conectando al servidor...</title>
   <style>
     * {{ box-sizing: border-box; }}
     body {{
@@ -673,7 +1121,7 @@ public class MainForm : Form
       border: 1px solid rgba(88, 101, 242, 0.4);
       color: #5865f2;
       font-weight: 700;
-      font-size: 15px;
+      font-size: 14.5px;
       padding: 6px 18px;
       border-radius: 20px;
       margin-bottom: 16px;
@@ -731,15 +1179,15 @@ public class MainForm : Form
 <body>
   <div class='card'>
     <div class='spinner'></div>
-    <h2>Buscando canal...</h2>
-    <div class='room-pill'>Canal: #{displayChannel}</div>
-    <p>Esperando a que el anfitrión abra el canal.<br>Te conectarás automáticamente en cuanto esté disponible.</p>
+    <h2>Buscando servidor...</h2>
+    <div class='room-pill'>Servidor: {displayServer} • Canal: #{displayChannel}</div>
+    <p>Esperando a que el anfitrión tenga Lowcord abierto.<br>Te conectarás automáticamente apenas esté online.</p>
     <div class='actions'>
-      <button onclick='window.chrome.webview.postMessage(""CHANGE_CHANNEL"")'>Cambiar Canal (F2)</button>
+      <button onclick='window.chrome.webview.postMessage(""CHANGE_SERVER"")'>Volver a Canales (F2)</button>
     </div>
     <div class='status-live'>
       <div class='dot'></div>
-      <span>Reintentando automáticamente cada 2.5s</span>
+      <span>Reintentando automáticamente cada 4s</span>
     </div>
   </div>
 </body>
@@ -752,14 +1200,15 @@ public class MainForm : Form
     private void StartAutoRetry()
     {
         StopAutoRetry();
-        _retryTimer = new System.Windows.Forms.Timer { Interval = 2500 };
+        _retryTimer = new System.Windows.Forms.Timer { Interval = 4000 };
         _retryTimer.Tick += async (s, e) =>
         {
+            var serverCode = _settings.ServerCode;
             var channel = _settings.Channel;
             var user = _settings.Username;
             var pass = _settings.Password;
 
-            if (await IsLocalServerRunningAsync() && IsTargetMatchingLocalHost(channel))
+            if (await IsLocalServerRunningAsync() && IsTargetMatchingLocalHost(serverCode))
             {
                 StopAutoRetry();
                 var hostUrl = $"http://localhost:8080/?room={Uri.EscapeDataString(channel)}&user={Uri.EscapeDataString(user)}&pass={Uri.EscapeDataString(pass)}&autojoin=true";
@@ -767,7 +1216,7 @@ public class MainForm : Form
                 return;
             }
 
-            var resolved = await ResolveInputToUrlAsync(channel);
+            var resolved = await ResolveInputToUrlAsync(serverCode);
             if (!string.IsNullOrEmpty(resolved) && Uri.TryCreate(resolved, UriKind.Absolute, out var baseUri))
             {
                 StopAutoRetry();
@@ -789,71 +1238,6 @@ public class MainForm : Form
             _retryTimer.Stop();
             _retryTimer.Dispose();
             _retryTimer = null;
-        }
-    }
-
-    private async Task EnsureHostServerRunningAsync(string channel)
-    {
-        if (await IsLocalServerRunningAsync()) return;
-
-        var serverExe = FindServerExecutable();
-        if (!string.IsNullOrEmpty(serverExe) && File.Exists(serverExe))
-        {
-            try
-            {
-                var psi = new System.Diagnostics.ProcessStartInfo
-                {
-                    FileName = serverExe,
-                    WorkingDirectory = Path.GetDirectoryName(serverExe)!,
-                    WindowStyle = System.Diagnostics.ProcessWindowStyle.Hidden,
-                    CreateNoWindow = true,
-                    UseShellExecute = false
-                };
-                System.Diagnostics.Process.Start(psi);
-
-                var cloudflaredExe = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "cloudflared.exe");
-                if (File.Exists(cloudflaredExe))
-                {
-                    var cfLog = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "cloudflared.log");
-                    var cfPsi = new System.Diagnostics.ProcessStartInfo
-                    {
-                        FileName = cloudflaredExe,
-                        Arguments = $"tunnel --url http://localhost:8080 --logfile \"{cfLog}\"",
-                        WorkingDirectory = AppDomain.CurrentDomain.BaseDirectory,
-                        WindowStyle = System.Diagnostics.ProcessWindowStyle.Hidden,
-                        CreateNoWindow = true,
-                        UseShellExecute = false
-                    };
-                    System.Diagnostics.Process.Start(cfPsi);
-
-                    _ = Task.Run(async () =>
-                    {
-                        for (int i = 0; i < 30; i++)
-                        {
-                            await Task.Delay(600);
-                            if (File.Exists(cfLog))
-                            {
-                                var content = await File.ReadAllTextAsync(cfLog);
-                                var match = System.Text.RegularExpressions.Regex.Match(content, @"(https://[a-zA-Z0-9-]+\.trycloudflare\.com)");
-                                if (match.Success)
-                                {
-                                    var tunnelUrl = match.Groups[1].Value;
-                                    var encoded = Uri.EscapeDataString(tunnelUrl);
-                                    await _httpClient.GetStringAsync($"https://api.keyval.org/set/lowcord_{channel}/{encoded}");
-                                    break;
-                                }
-                            }
-                        }
-                    });
-                }
-            }
-            catch { }
-        }
-
-        for (int i = 0; i < 15; i++)
-        {
-            if (await IsLocalServerRunningAsync()) break;
-            await Task.Delay(300);
         }
     }
 
@@ -932,7 +1316,6 @@ public class MainForm : Form
                 string? downloadUrl = null;
                 if (root.TryGetProperty("assets", out var assetsProp) && assetsProp.ValueKind == JsonValueKind.Array)
                 {
-                    // Prioridad 1: Ejecutable directo Lowcord-Client.exe
                     foreach (var asset in assetsProp.EnumerateArray())
                     {
                         var name = asset.GetProperty("name").GetString() ?? "";
@@ -942,7 +1325,6 @@ public class MainForm : Form
                             break;
                         }
                     }
-                    // Prioridad 2: Archivo zip portable
                     if (downloadUrl == null)
                     {
                         foreach (var asset in assetsProp.EnumerateArray())
@@ -1042,14 +1424,12 @@ public class MainForm : Form
                 try { File.Delete(tempDownloadFile); } catch { }
             }
 
-            // Reemplazo atómico en Windows
             var oldExe = currentExe + ".old";
             if (File.Exists(oldExe)) File.Delete(oldExe);
 
             File.Move(currentExe, oldExe);
             File.Move(newExePath, currentExe);
 
-            // Iniciar nueva versión
             System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
             {
                 FileName = currentExe,
@@ -1092,7 +1472,14 @@ public class MainForm : Form
             int msg = wParam.ToInt32();
             int vkCode = Marshal.ReadInt32(lParam);
 
-            if ((uint)vkCode == _targetVk)
+            // Coincidencia exacta o equivalencia para la tecla al lado del 1 (0xDC / 0xC0 / 0xDF)
+            bool isMatch = ((uint)vkCode == _targetVk);
+            if (!isMatch && (_targetVk == 0xDC || _targetVk == 0xC0 || _targetVk == 0xDF))
+            {
+                isMatch = (vkCode == 0xDC || vkCode == 0xC0 || vkCode == 0xDF);
+            }
+
+            if (isMatch)
             {
                 if (msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN)
                 {
@@ -1171,7 +1558,9 @@ public class MainForm : Form
             "space" => (uint)Keys.Space,
             "capslock" => (uint)Keys.CapsLock,
             "tab" => (uint)Keys.Tab,
-            "backquote" => 0xC0,
+            "backquote" => 0xDC, // Tecla al lado del 1 en layout latinoamericano / español
+            "oem5" or "oem_5" => 0xDC,
+            "oem3" or "oem_3" => 0xC0,
             "minus" => 0xBD,
             "equal" => 0xBB,
             "bracketleft" => 0xDB,

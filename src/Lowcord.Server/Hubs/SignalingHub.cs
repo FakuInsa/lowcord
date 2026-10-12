@@ -146,4 +146,15 @@ public class SignalingHub : Hub
 
         await base.OnDisconnectedAsync(exception);
     }
+
+    public static object GetActiveRooms()
+    {
+        return Rooms.Values.Select(r => new
+        {
+            roomId = r.RoomId,
+            hasPassword = !string.IsNullOrEmpty(r.Password),
+            userCount = r.Users.Count,
+            users = r.Users.Values.Select(u => u.UserName).ToList()
+        }).ToList();
+    }
 }
