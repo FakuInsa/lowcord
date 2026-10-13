@@ -111,6 +111,35 @@ Console.WriteLine("====================================================");
 Console.WriteLine(" [LOWCORD] Servidor de Señalización WebRTC Iniciado");
 Console.WriteLine(" Escuchando en: http://0.0.0.0:8080");
 Console.WriteLine($" Carpeta Web: {wwwrootDir}");
+
+// Registrar canales iniciales
+var initialRoom = "general";
+for (int i = 0; i < args.Length; i++)
+{
+    if ((args[i] == "--room" || args[i] == "-r") && i + 1 < args.Length)
+    {
+        initialRoom = args[i + 1].Trim().ToLowerInvariant();
+        break;
+    }
+}
+var roomFile = Path.Combine(baseDir, "room_code.txt");
+if (File.Exists(roomFile))
+{
+    try
+    {
+        var txt = File.ReadAllText(roomFile).Trim().ToLowerInvariant();
+        if (!string.IsNullOrEmpty(txt)) initialRoom = txt;
+    }
+    catch { }
+}
+
+SignalingHub.EnsureRoomExists(initialRoom);
+if (initialRoom != "general")
+{
+    SignalingHub.EnsureRoomExists("general");
+}
+
+Console.WriteLine($" Canal inicial disponible: #{initialRoom}");
 Console.WriteLine("====================================================");
 
 app.Run();

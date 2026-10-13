@@ -220,9 +220,13 @@ public class ServerHostForm : Form
         Log($"[CMD] [1/3] Iniciando servidor Kestrel en http://localhost:8080...", Color.Yellow);
         try
         {
+            var roomFile = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "room_code.txt");
+            try { File.WriteAllText(roomFile, serverName); } catch { }
+
             var srvPsi = new ProcessStartInfo
             {
                 FileName = serverExe,
+                Arguments = $"--room \"{serverName}\"",
                 WorkingDirectory = Path.GetDirectoryName(serverExe)!,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
@@ -311,7 +315,7 @@ public class ServerHostForm : Form
                 var cfPsi = new ProcessStartInfo
                 {
                     FileName = cloudflaredExe,
-                    Arguments = $"tunnel --url http://localhost:8080 --logfile \"{cfLog}\"",
+                    Arguments = $"tunnel --url http://localhost:8080 --logfile \"{cfLog}\" --proxy-dns --proxy-dns-upstream \"https://1.1.1.1/dns-query\"",
                     WorkingDirectory = AppDomain.CurrentDomain.BaseDirectory,
                     UseShellExecute = false,
                     CreateNoWindow = true

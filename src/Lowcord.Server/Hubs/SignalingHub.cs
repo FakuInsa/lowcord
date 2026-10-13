@@ -16,6 +16,7 @@ public class RoomState
 {
     public required string RoomId { get; set; }
     public required string Password { get; set; }
+    public bool IsPersistent { get; set; } = true;
     public ConcurrentDictionary<string, UserSession> Users { get; } = new();
 }
 
@@ -24,6 +25,17 @@ public class SignalingHub : Hub
     // Almacén en memoria concurrente para las salas y usuarios conectados
     private static readonly ConcurrentDictionary<string, RoomState> Rooms = new();
     private static readonly ConcurrentDictionary<string, string> ConnectionToRoom = new();
+
+    public static void EnsureRoomExists(string roomId, string password = "")
+    {
+        roomId = string.IsNullOrWhiteSpace(roomId) ? "general" : roomId.Trim().ToLowerInvariant();
+        Rooms.GetOrAdd(roomId, id => new RoomState
+        {
+            RoomId = id,
+            Password = password,
+            IsPersistent = true
+        });
+    }
 
     /// <summary>
     /// Intenta conectar al usuario a una sala validando la contraseña de acceso.
@@ -133,8 +145,8 @@ public class SignalingHub : Hub
         {
             room.Users.TryRemove(Context.ConnectionId, out _);
 
-            // Si la sala queda vacía, la eliminamos de memoria
-            if (room.Users.IsEmpty)
+            // Si la sala no es persistente y queda vacía, la eliminamos de memoria
+            if (room.Users.IsEmpty && !room.IsPersistent)
             {
                 Rooms.TryRemove(roomId, out _);
             }

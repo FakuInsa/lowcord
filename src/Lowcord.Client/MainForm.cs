@@ -19,7 +19,7 @@ public class ClientSettings
 
 public class MainForm : Form
 {
-    public const string APP_VERSION = "v2.6";
+    public const string APP_VERSION = "v2.7";
 
     private const int WH_KEYBOARD_LL = 13;
     private const int WM_KEYDOWN = 0x0100;
@@ -447,6 +447,7 @@ public class MainForm : Form
                 var psi = new System.Diagnostics.ProcessStartInfo
                 {
                     FileName = serverExe,
+                    Arguments = $"--room \"{_settings.ServerCode}\"",
                     WorkingDirectory = Path.GetDirectoryName(serverExe)!,
                     WindowStyle = System.Diagnostics.ProcessWindowStyle.Hidden,
                     CreateNoWindow = true,
@@ -470,7 +471,7 @@ public class MainForm : Form
                     var cfPsi = new System.Diagnostics.ProcessStartInfo
                     {
                         FileName = cloudflaredExe,
-                        Arguments = $"tunnel --url http://localhost:8080 --logfile \"{cfLog}\"",
+                        Arguments = $"tunnel --url http://localhost:8080 --logfile \"{cfLog}\" --proxy-dns --proxy-dns-upstream \"https://1.1.1.1/dns-query\"",
                         WorkingDirectory = AppDomain.CurrentDomain.BaseDirectory,
                         WindowStyle = System.Diagnostics.ProcessWindowStyle.Hidden,
                         CreateNoWindow = true,

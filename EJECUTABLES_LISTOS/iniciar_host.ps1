@@ -58,7 +58,7 @@ if (-not (Test-Path $cloudflaredExe)) {
         Write-Host "       Aviso: No se pudo descargar cloudflared automaticamente: $_" -ForegroundColor Red
     }
 }
-$procCf = Start-Process -FilePath $cloudflaredExe -ArgumentList "tunnel --url http://localhost:8080 --logfile `"$logFile`"" -PassThru -WindowStyle Minimized
+$procCf = Start-Process -FilePath $cloudflaredExe -ArgumentList "tunnel --url http://localhost:8080 --logfile `"$logFile`" --proxy-dns --proxy-dns-upstream `"https://1.1.1.1/dns-query`"" -PassThru -WindowStyle Minimized
 
 # 5. Esperar enlace de Cloudflare
 $tunnelUrl = $null
