@@ -19,7 +19,7 @@ public class ClientSettings
 
 public class MainForm : Form
 {
-    public const string APP_VERSION = "v2.4";
+    public const string APP_VERSION = "v2.5";
 
     private const int WH_KEYBOARD_LL = 13;
     private const int WM_KEYDOWN = 0x0100;
@@ -211,9 +211,46 @@ public class MainForm : Form
 
                     if (!string.IsNullOrEmpty(msgString))
                     {
-                        if (msgString == "CHANGE_SERVER" || msgString == "CHANGE_CHANNEL")
+                        if (msgString == "CHANGE_SERVER" || msgString == "CHANGE_CHANNEL" || msgString == "SHOW_CHANNELS")
                         {
                             BeginInvoke(() => ShowConnectScreen());
+                            return;
+                        }
+                        if (msgString == "FETCH_CHANNELS")
+                        {
+                            _ = Task.Run(async () =>
+                            {
+                                string json = "[]";
+                                try
+                                {
+                                    if (_settings.IsHosting && await IsLocalServerRunningAsync())
+                                    {
+                                        json = await FetchChannelsJsonAsync("http://localhost:8080");
+                                    }
+                                    else if (!string.IsNullOrWhiteSpace(_settings.ServerCode))
+                                    {
+                                        var resolved = await ResolveInputToUrlAsync(_settings.ServerCode);
+                                        if (!string.IsNullOrEmpty(resolved))
+                                        {
+                                            json = await FetchChannelsJsonAsync(resolved);
+                                        }
+                                    }
+                                }
+                                catch { }
+
+                                BeginInvoke(() =>
+                                {
+                                    try
+                                    {
+                                        _webView?.CoreWebView2?.PostWebMessageAsJson(JsonSerializer.Serialize(new
+                                        {
+                                            type = "CHANNELS_DATA",
+                                            channels = JsonSerializer.Deserialize<JsonElement>(json)
+                                        }));
+                                    }
+                                    catch { }
+                                });
+                            });
                             return;
                         }
                         if (msgString == "EXIT_APP")
@@ -602,17 +639,18 @@ public class MainForm : Form
       background: #2b2d31;
       border: 1px solid rgba(255, 255, 255, 0.08);
       border-radius: 16px;
-      padding: 26px 28px;
-      width: 490px;
+      padding: 24px 26px;
+      width: 480px;
       max-width: 95vw;
       box-shadow: 0 16px 40px rgba(0,0,0,0.5);
+      position: relative;
     }}
     .header-row {{
       display: flex;
       align-items: center;
       justify-content: space-between;
-      margin-bottom: 18px;
-      padding-bottom: 14px;
+      margin-bottom: 14px;
+      padding-bottom: 12px;
       border-bottom: 1px solid rgba(255, 255, 255, 0.08);
     }}
     .brand {{
@@ -635,85 +673,73 @@ public class MainForm : Form
       font-weight: 700;
       color: #fff;
     }}
-    .user-pill {{
+    .header-actions {{
       display: flex;
       align-items: center;
       gap: 8px;
+    }}
+    .user-pill {{
+      display: flex;
+      align-items: center;
+      gap: 6px;
       background: #1e1f22;
       padding: 6px 12px;
       border-radius: 20px;
       font-size: 13px;
+      font-weight: 600;
       color: #dbdee1;
     }}
-    .btn-edit-user {{
-      background: transparent;
-      border: none;
-      color: #5865F2;
-      font-weight: 600;
-      cursor: pointer;
-      font-size: 12px;
-    }}
-    .btn-edit-user:hover {{ text-decoration: underline; }}
-    
-    .server-bar {{
+    .btn-gear {{
       background: #1e1f22;
-      border-radius: 10px;
-      padding: 10px 14px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      color: #dbdee1;
+      padding: 6px 10px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 14px;
+      transition: background 0.15s, border-color 0.15s;
       display: flex;
       align-items: center;
-      justify-content: space-between;
-      margin-bottom: 18px;
-      font-size: 13px;
+      justify-content: center;
     }}
-    .server-info {{
+    .btn-gear:hover {{
+      background: #35373c;
+      border-color: rgba(255, 255, 255, 0.2);
+    }}
+
+    .server-status-bar {{
       display: flex;
       align-items: center;
       gap: 8px;
+      background: rgba(0, 0, 0, 0.2);
+      border-radius: 8px;
+      padding: 8px 12px;
+      margin-bottom: 16px;
+      font-size: 12.5px;
+      color: #949ba4;
     }}
-    .server-dot {{
-      width: 9px;
-      height: 9px;
+    .status-dot {{
+      width: 8px;
+      height: 8px;
       border-radius: 50%;
       background: {(isHostingNow ? "#23a55a" : "#f0b232")};
     }}
-    .server-input-box {{
-      background: #2b2d31;
-      border: 1px solid rgba(255, 255, 255, 0.15);
-      border-radius: 6px;
-      color: #fff;
-      font-size: 12.5px;
-      font-weight: 600;
-      padding: 4px 8px;
-      width: 110px;
-      outline: none;
-      text-align: center;
+    .status-text {{
+      color: #dbdee1;
+      font-weight: 500;
     }}
-    .btn-action-small {{
-      background: #5865F2;
-      color: #fff;
-      border: none;
-      padding: 5px 12px;
-      border-radius: 6px;
-      font-size: 12px;
+    .status-link {{
+      margin-left: auto;
+      color: #5865F2;
       font-weight: 600;
       cursor: pointer;
-    }}
-    .btn-action-small:hover {{ background: #4752c4; }}
-
-    .btn-danger-small {{
-      background: #da373c;
-      color: #fff;
-      border: none;
-      padding: 5px 12px;
-      border-radius: 6px;
+      text-decoration: none;
       font-size: 12px;
-      font-weight: 600;
-      cursor: pointer;
     }}
-    .btn-danger-small:hover {{ background: #a1282c; }}
+    .status-link:hover {{ text-decoration: underline; }}
 
     .section-title {{
-      font-size: 12px;
+      font-size: 11.5px;
       font-weight: 700;
       color: #949ba4;
       text-transform: uppercase;
@@ -728,9 +754,16 @@ public class MainForm : Form
       display: flex;
       flex-direction: column;
       gap: 8px;
-      margin-bottom: 18px;
-      max-height: 220px;
+      margin-bottom: 16px;
+      max-height: 200px;
       overflow-y: auto;
+    }}
+    .no-channels-box {{
+      background: #1e1f22;
+      border: 1px dashed rgba(255, 255, 255, 0.1);
+      border-radius: 10px;
+      padding: 24px 16px;
+      text-align: center;
     }}
     .channel-item {{
       background: #1e1f22;
@@ -778,13 +811,23 @@ public class MainForm : Form
     .create-box {{
       background: #1e1f22;
       border-radius: 10px;
-      padding: 12px 14px;
-      margin-top: 10px;
+      padding: 14px;
+      margin-top: 4px;
     }}
-    .create-row {{
+    .create-title {{
+      font-size: 12.5px;
+      font-weight: 600;
+      color: #dbdee1;
+      margin-bottom: 8px;
+    }}
+    .create-form {{
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }}
+    .form-inputs-row {{
       display: flex;
       gap: 8px;
-      margin-top: 8px;
     }}
     .input-ch {{
       flex: 1;
@@ -792,23 +835,174 @@ public class MainForm : Form
       border: 1px solid rgba(255, 255, 255, 0.15);
       border-radius: 6px;
       color: #fff;
-      padding: 7px 10px;
+      padding: 8px 10px;
       font-size: 13px;
       outline: none;
     }}
     .input-ch:focus {{ border-color: #5865F2; }}
+    .input-pass {{
+      max-width: 140px;
+    }}
+    .btn-join-main {{
+      width: 100%;
+      background: #5865F2;
+      color: #fff;
+      border: none;
+      padding: 9px;
+      border-radius: 6px;
+      font-size: 13.5px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s;
+    }}
+    .btn-join-main:hover {{ background: #4752c4; }}
 
-    .host-control-box {{
-      background: rgba(88, 101, 242, 0.1);
-      border: 1px dashed rgba(88, 101, 242, 0.4);
-      border-radius: 10px;
-      padding: 12px 14px;
-      margin-top: 14px;
+    /* Modal Popup de Configuración y Host */
+    .modal-backdrop {{
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.75);
+      backdrop-filter: blur(4px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 999;
+      animation: fadeIn 0.15s ease-out;
+    }}
+    .modal-window {{
+      background: #2b2d31;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 14px;
+      width: 440px;
+      max-width: 92vw;
+      padding: 22px 24px;
+      box-shadow: 0 20px 50px rgba(0,0,0,0.6);
+    }}
+    .modal-header {{
       display: flex;
       align-items: center;
       justify-content: space-between;
-      font-size: 12.5px;
+      margin-bottom: 16px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
     }}
+    .modal-header h3 {{
+      font-size: 16px;
+      font-weight: 700;
+      color: #fff;
+    }}
+    .btn-close-modal {{
+      background: transparent;
+      border: none;
+      color: #949ba4;
+      font-size: 22px;
+      line-height: 1;
+      cursor: pointer;
+    }}
+    .btn-close-modal:hover {{ color: #fff; }}
+    .modal-section {{
+      margin-bottom: 14px;
+    }}
+    .modal-label {{
+      display: block;
+      font-size: 12px;
+      font-weight: 700;
+      color: #b5bac1;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 6px;
+    }}
+    .modal-row {{
+      display: flex;
+      gap: 8px;
+    }}
+    .modal-input {{
+      flex: 1;
+      background: #1e1f22;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 6px;
+      color: #fff;
+      padding: 7px 10px;
+      font-size: 13px;
+      outline: none;
+    }}
+    .modal-input:focus {{ border-color: #5865F2; }}
+    .btn-modal-action {{
+      background: #5865F2;
+      color: #fff;
+      border: none;
+      padding: 7px 14px;
+      border-radius: 6px;
+      font-size: 12.5px;
+      font-weight: 600;
+      cursor: pointer;
+    }}
+    .btn-modal-action:hover {{ background: #4752c4; }}
+    .modal-hint {{
+      display: block;
+      font-size: 11.5px;
+      color: #949ba4;
+      margin-top: 5px;
+    }}
+    .modal-divider {{
+      height: 1px;
+      background: rgba(255, 255, 255, 0.08);
+      margin: 16px 0;
+    }}
+    .modal-desc {{
+      font-size: 12.5px;
+      color: #dbdee1;
+      line-height: 1.4;
+    }}
+    .btn-modal-host {{
+      background: #23a55a;
+      color: #fff;
+      border: none;
+      padding: 8px 14px;
+      border-radius: 6px;
+      font-size: 12.5px;
+      font-weight: 600;
+      cursor: pointer;
+    }}
+    .btn-modal-host:hover {{ background: #1d8a4b; }}
+    .btn-modal-danger {{
+      background: #da373c;
+      color: #fff;
+      border: none;
+      padding: 8px 14px;
+      border-radius: 6px;
+      font-size: 12.5px;
+      font-weight: 600;
+      cursor: pointer;
+    }}
+    .btn-modal-danger:hover {{ background: #a1282c; }}
+    .btn-modal-share {{
+      background: #4e5058;
+      color: #fff;
+      border: none;
+      padding: 8px 14px;
+      border-radius: 6px;
+      font-size: 12.5px;
+      font-weight: 600;
+      cursor: pointer;
+    }}
+    .btn-modal-share:hover {{ background: #6d6f78; }}
+    .modal-footer {{
+      display: flex;
+      justify-content: flex-end;
+      margin-top: 18px;
+    }}
+    .btn-modal-close {{
+      background: #35373c;
+      color: #dbdee1;
+      border: none;
+      padding: 7px 16px;
+      border-radius: 6px;
+      font-size: 12.5px;
+      font-weight: 600;
+      cursor: pointer;
+    }}
+    .btn-modal-close:hover {{ background: #4e5058; }}
     
     .update-alert {{
       background: rgba(88, 101, 242, 0.2);
@@ -837,6 +1031,10 @@ public class MainForm : Form
       font-size: 11px;
       margin-top: 14px;
     }}
+    @keyframes fadeIn {{
+      from {{ opacity: 0; transform: scale(0.97); }}
+      to {{ opacity: 1; transform: scale(1); }}
+    }}
   </style>
 </head>
 <body>
@@ -848,62 +1046,98 @@ public class MainForm : Form
         <div class='brand-logo'>
           <svg viewBox='0 0 24 24'><path d='M12 3a9 9 0 0 0-9 9v7a3 3 0 0 0 3 3h1a1 1 0 0 0 1-1v-6a1 1 0 0 0-1-1H5v-3a7 7 0 1 1 14 0v3h-2a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h1a3 3 0 0 0 3-3v-7a9 9 0 0 0-9-9z'/></svg>
         </div>
-        <div>
-          <div class='brand-title'>Lowcord</div>
-        </div>
+        <div class='brand-title'>Lowcord</div>
       </div>
-      <div class='user-pill'>
-        <span>👤 <b>{safeUser}</b></span>
-        <button type='button' class='btn-edit-user' onclick='editName()'>Cambiar</button>
+      <div class='header-actions'>
+        <div class='user-pill' title='Tu Apodo'>
+          <span>👤 {safeUser}</span>
+        </div>
+        <button type='button' class='btn-gear' onclick='openSettingsModal()' title='Configuración y Servidor'>
+          ⚙️
+        </button>
       </div>
     </div>
 
-    <!-- Barra de Servidor -->
-    <div class='server-bar'>
-      <div class='server-info'>
-        <div class='server-dot'></div>
-        <span>{(isHostingNow ? "Tu Servidor:" : "Servidor:")}</span>
-        <input type='text' id='serverInput' class='server-input-box' value='{serverCode}' onchange='updateServerCode(this.value)'>
-      </div>
-      {(isHostingNow
-        ? $"<button type='button' class='btn-action-small' onclick='copyShare()'>Copiar Enlace</button>"
-        : $"<button type='button' class='btn-action-small' onclick='updateServerCode(document.getElementById(\"serverInput\").value)'>Conectar</button>")}
+    <!-- Indicador sutil de servidor -->
+    <div class='server-status-bar'>
+      <div class='status-dot'></div>
+      <span class='status-text'>{(isHostingNow ? "Alojando en tu PC (Modo Anfitrión)" : $"Servidor actual: <b>{serverCode}</b>")}</span>
+      <span class='status-link' onclick='openSettingsModal()'>Cambiar en ⚙️</span>
     </div>
 
     <!-- Lista de Canales -->
     <div class='section-title'>
       <span>Canales de Voz</span>
-      <span style='cursor: pointer; color: #5865F2;' onclick='window.location.reload()'>↻ Actualizar</span>
+      <span style='cursor: pointer; color: #5865F2;' onclick='fetchChannelsNow()'>↻ Actualizar</span>
     </div>
 
     <div class='channels-list' id='channelsContainer'>
       <!-- Renderizado por JS -->
     </div>
 
-    <!-- Crear o entrar a un canal manual -->
+    <!-- Crear o entrar a un canal -->
     <div class='create-box'>
-      <div style='font-size: 12px; font-weight: 600; color: #b5bac1;'>Entrar a canal específico:</div>
-      <form onsubmit='createAndJoin(event)' class='create-row'>
-        <input type='text' id='customChName' class='input-ch' placeholder='Nombre del canal (ej: tarkov)' required>
-        <input type='password' id='customChPass' class='input-ch' placeholder='Clave (opcional)' style='max-width: 130px;'>
-        <button type='submit' class='btn-action-small'>Entrar</button>
+      <div class='create-title'>+ Crear o Entrar a un Canal:</div>
+      <form onsubmit='createAndJoin(event)' class='create-form'>
+        <div class='form-inputs-row'>
+          <input type='text' id='customChName' class='input-ch' placeholder='Nombre del canal (ej: tarkov)' required autocomplete='off'>
+          <input type='password' id='customChPass' class='input-ch input-pass' placeholder='Contraseña (opcional)' autocomplete='off'>
+        </div>
+        <button type='submit' class='btn-join-main'>Conectar al Canal</button>
       </form>
     </div>
 
-    <!-- Control de Host opcional si los archivos de servidor existen -->
-    {(hasHostFiles ? $@"
-    <div class='host-control-box'>
-      <div>
-        <b>{(isHostingNow ? "Servidor local ACTIVO en tu PC" : "¿Quieres ser tú el Anfitrión?")}</b>
-        <div style='color: #949ba4; font-size: 11.5px;'>{(isHostingNow ? "Tus amigos pueden entrar con tu código." : "Inicia el servidor solo si vas a alojar la llamada.")}</div>
-      </div>
-      {(isHostingNow
-        ? "<button type='button' class='btn-danger-small' onclick='window.chrome.webview.postMessage(\"STOP_HOSTING\")'>Detener Servidor</button>"
-        : "<button type='button' class='btn-action-small' onclick='window.chrome.webview.postMessage(\"START_HOSTING\")'>Iniciar mi Servidor</button>")}
-    </div>" : "")}
-
     <div class='footer-note'>
       {APP_VERSION} • Atajo global (M) para mutearte • Pulsa F2 para cambiar de canal
+    </div>
+  </div>
+
+  <!-- Modal Popup de Configuración y Host -->
+  <div id='settingsModal' class='modal-backdrop' style='display: none;'>
+    <div class='modal-window'>
+      <div class='modal-header'>
+        <h3>Configuración y Servidor</h3>
+        <button type='button' class='btn-close-modal' onclick='closeSettingsModal()'>&times;</button>
+      </div>
+
+      <div class='modal-section'>
+        <label class='modal-label'>Tu Apodo / Nombre:</label>
+        <div class='modal-row'>
+          <input type='text' id='modalNameInput' class='modal-input' value='{safeUser}' maxlength='25' autocomplete='off'>
+          <button type='button' class='btn-modal-action' onclick='saveNameFromModal()'>Guardar</button>
+        </div>
+        <small class='modal-hint'>Tu nombre se guarda para siempre y no se vuelve a pedir.</small>
+      </div>
+
+      <div class='modal-section'>
+        <label class='modal-label'>Código del Servidor (Amigo o Sala):</label>
+        <div class='modal-row'>
+          <input type='text' id='modalServerInput' class='modal-input' value='{serverCode}' autocomplete='off'>
+          <button type='button' class='btn-modal-action' onclick='saveServerFromModal()'>Cambiar</button>
+        </div>
+        <small class='modal-hint'>Escribe el código del amigo que está alojando el servidor (ej: facu).</small>
+      </div>
+
+      {(hasHostFiles ? $@"
+      <div class='modal-divider'></div>
+      <div class='modal-section'>
+        <label class='modal-label'>Modo Anfitrión (Crear tu propio servidor):</label>
+        <p class='modal-desc'>{(isHostingNow
+          ? "Tu servidor local está ACTIVO. Tus amigos pueden unirse con tu código o con el enlace directo."
+          : "Inicia el servidor en esta PC solo si tú vas a alojar la llamada.")}</p>
+        <div style='margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap;'>
+          {(isHostingNow ? $@"
+            <button type='button' class='btn-modal-share' onclick='copyShare()'>📋 Copiar Enlace para Amigos</button>
+            <button type='button' class='btn-modal-danger' onclick='window.chrome.webview.postMessage(""STOP_HOSTING"")'>Detener Servidor</button>
+          " : @"
+            <button type='button' class='btn-modal-host' onclick='window.chrome.webview.postMessage(""START_HOSTING"")'>Iniciar mi Servidor</button>
+          ")}
+        </div>
+      </div>" : "")}
+
+      <div class='modal-footer'>
+        <button type='button' class='btn-modal-close' onclick='closeSettingsModal()'>Cerrar</button>
+      </div>
     </div>
   </div>
 
@@ -912,20 +1146,33 @@ public class MainForm : Form
     var currentUser = '{safeUser}';
     var currentServer = '{serverCode}';
 
-    function renderChannels() {{
+    function renderChannels(channels) {{
+      if (channels !== undefined) {{
+        currentChannels = channels;
+      }}
       var container = document.getElementById('channelsContainer');
       container.innerHTML = '';
 
-      var list = (currentChannels && currentChannels.length > 0) ? currentChannels : [
-        {{ roomId: 'general', userCount: 0, users: [], hasPassword: false }},
-        {{ roomId: 'tarkov', userCount: 0, users: [], hasPassword: false }}
-      ];
+      var list = (currentChannels && Array.isArray(currentChannels)) ? currentChannels : [];
+
+      if (list.length === 0) {{
+        container.innerHTML = `
+          <div class='no-channels-box'>
+            <div style='font-size: 26px; margin-bottom: 4px;'>🎧</div>
+            <div style='font-weight: 600; color: #dbdee1;'>No hay canales creados aún</div>
+            <div style='font-size: 12px; color: #949ba4; margin-top: 2px;'>Escribe un nombre abajo para crear un canal y conectarte.</div>
+          </div>
+        `;
+        return;
+      }}
 
       list.forEach(function(ch) {{
         var item = document.createElement('div');
         item.className = 'channel-item';
 
-        var userLabel = ch.userCount > 0 ? (ch.userCount + ' conectado' + (ch.userCount > 1 ? 's' : '') + ': ' + (ch.users || []).join(', ')) : 'Canal libre';
+        var userLabel = ch.userCount > 0
+          ? (ch.userCount + ' conectado' + (ch.userCount > 1 ? 's' : '') + ': ' + (ch.users || []).join(', '))
+          : 'Canal libre';
         var badgeClass = ch.userCount > 0 ? 'channel-badge active' : 'channel-badge';
         var lockIcon = ch.hasPassword ? ' 🔒' : '';
 
@@ -968,16 +1215,35 @@ public class MainForm : Form
       }}
     }}
 
-    function editName() {{
-      var n = prompt('Ingresa tu nuevo Apodo / Nombre:', currentUser);
-      if (n && n.trim()) {{
-        window.chrome.webview.postMessage('SET_NAME:' + n.trim());
+    function openSettingsModal() {{
+      document.getElementById('settingsModal').style.display = 'flex';
+    }}
+
+    function closeSettingsModal() {{
+      document.getElementById('settingsModal').style.display = 'none';
+    }}
+
+    document.getElementById('settingsModal').addEventListener('click', function(e) {{
+      if (e.target === this) closeSettingsModal();
+    }});
+
+    function saveNameFromModal() {{
+      var n = (document.getElementById('modalNameInput').value || '').trim();
+      if (n) {{
+        window.chrome.webview.postMessage('SET_NAME:' + n);
       }}
     }}
 
-    function updateServerCode(code) {{
-      if (code && code.trim()) {{
-        window.chrome.webview.postMessage('SET_SERVER_CODE:' + code.trim());
+    function saveServerFromModal() {{
+      var s = (document.getElementById('modalServerInput').value || '').trim().toLowerCase();
+      if (s) {{
+        window.chrome.webview.postMessage('SET_SERVER_CODE:' + s);
+      }}
+    }}
+
+    function fetchChannelsNow() {{
+      if (window.chrome && window.chrome.webview) {{
+        window.chrome.webview.postMessage('FETCH_CHANNELS');
       }}
     }}
 
@@ -987,6 +1253,22 @@ public class MainForm : Form
         alert('Enlace copiado al portapapeles:\n' + link + '\n\nPásaselo a tus amigos para que entren directo.');
       }}).catch(function() {{
         prompt('Copia este enlace para tus amigos:', link);
+      }});
+    }}
+
+    // Auto-actualizar canales cada 3 segundos
+    setInterval(function() {{
+      fetchChannelsNow();
+    }}, 3000);
+
+    if (window.chrome && window.chrome.webview) {{
+      window.chrome.webview.addEventListener('message', function(event) {{
+        try {{
+          var data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
+          if (data && data.type === 'CHANNELS_DATA') {{
+            renderChannels(data.channels);
+          }}
+        }} catch (e) {{}}
       }});
     }}
 
@@ -1120,7 +1402,7 @@ public class MainForm : Form
         var pass = _settings.Password;
 
         // 1. Si este equipo está hosteando activamente
-        if (_settings.IsHosting && await IsLocalServerRunningAsync() && IsTargetMatchingLocalHost(serverCode))
+        if (_settings.IsHosting && await IsLocalServerRunningAsync())
         {
             var hostUrl = $"http://localhost:8080/?room={Uri.EscapeDataString(channel)}&user={Uri.EscapeDataString(user)}&pass={Uri.EscapeDataString(pass)}&autojoin=true";
             _webView.Source = new Uri(hostUrl);
@@ -1287,7 +1569,7 @@ public class MainForm : Form
             var user = _settings.Username;
             var pass = _settings.Password;
 
-            if (_settings.IsHosting && await IsLocalServerRunningAsync() && IsTargetMatchingLocalHost(serverCode))
+            if (_settings.IsHosting && await IsLocalServerRunningAsync())
             {
                 StopAutoRetry();
                 var hostUrl = $"http://localhost:8080/?room={Uri.EscapeDataString(channel)}&user={Uri.EscapeDataString(user)}&pass={Uri.EscapeDataString(pass)}&autojoin=true";

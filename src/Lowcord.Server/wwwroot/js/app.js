@@ -1787,6 +1787,10 @@ async function leaveVoiceChannel() {
   stageContainer.classList.remove('has-screens', 'hide-participants');
 
   // 5. Ocultar la pantalla de llamada y volver a mostrar la Selección de Canales
+  if (window.chrome && window.chrome.webview) {
+    window.chrome.webview.postMessage('SHOW_CHANNELS');
+    return;
+  }
   appContainer.style.display = 'none';
   joinModal.style.display = 'flex';
 
