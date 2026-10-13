@@ -19,7 +19,7 @@ public class ClientSettings
 
 public class MainForm : Form
 {
-    public const string APP_VERSION = "v2.5";
+    public const string APP_VERSION = "v2.6";
 
     private const int WH_KEYBOARD_LL = 13;
     private const int WM_KEYDOWN = 0x0100;
@@ -57,6 +57,7 @@ public class MainForm : Form
     private string? _pendingUpdateUrl = null;
     private string? _pendingUpdateVersion = null;
     private string? _cachedTunnelUrl = null;
+    private ServerHostForm? _serverHostForm;
 
     public MainForm()
     {
@@ -258,12 +259,20 @@ public class MainForm : Form
                             BeginInvoke(() => Application.Exit());
                             return;
                         }
-                        if (msgString == "START_HOSTING")
+                        if (msgString == "OPEN_SERVER_HOST_WINDOW" || msgString == "START_HOSTING")
                         {
-                            BeginInvoke(async () =>
+                            BeginInvoke(() =>
                             {
-                                await StartHostingAsync();
-                                ShowConnectScreen();
+                                if (_serverHostForm == null || _serverHostForm.IsDisposed)
+                                {
+                                    _serverHostForm = new ServerHostForm(_settings.ServerCode, this);
+                                    _serverHostForm.Show();
+                                }
+                                else
+                                {
+                                    _serverHostForm.BringToFront();
+                                    _serverHostForm.WindowState = FormWindowState.Normal;
+                                }
                             });
                             return;
                         }
@@ -499,7 +508,7 @@ public class MainForm : Form
         }
     }
 
-    private async Task<bool> IsLocalServerRunningAsync()
+    public async Task<bool> IsLocalServerRunningAsync()
     {
         try
         {
@@ -1083,7 +1092,7 @@ public class MainForm : Form
           <input type='text' id='customChName' class='input-ch' placeholder='Nombre del canal (ej: tarkov)' required autocomplete='off'>
           <input type='password' id='customChPass' class='input-ch input-pass' placeholder='Contraseña (opcional)' autocomplete='off'>
         </div>
-        <button type='submit' class='btn-join-main'>Conectar al Canal</button>
+        <button type='submit' id='btnJoinMain' class='btn-join-main'>Conectar al Canal</button>
       </form>
     </div>
 
@@ -1110,7 +1119,7 @@ public class MainForm : Form
       </div>
 
       <div class='modal-section'>
-        <label class='modal-label'>Código del Servidor (Amigo o Sala):</label>
+        <label class='modal-label'>Servidor para Conectarte (Amigo):</label>
         <div class='modal-row'>
           <input type='text' id='modalServerInput' class='modal-input' value='{serverCode}' autocomplete='off'>
           <button type='button' class='btn-modal-action' onclick='saveServerFromModal()'>Cambiar</button>
@@ -1121,17 +1130,10 @@ public class MainForm : Form
       {(hasHostFiles ? $@"
       <div class='modal-divider'></div>
       <div class='modal-section'>
-        <label class='modal-label'>Modo Anfitrión (Crear tu propio servidor):</label>
-        <p class='modal-desc'>{(isHostingNow
-          ? "Tu servidor local está ACTIVO. Tus amigos pueden unirse con tu código o con el enlace directo."
-          : "Inicia el servidor en esta PC solo si tú vas a alojar la llamada.")}</p>
-        <div style='margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap;'>
-          {(isHostingNow ? $@"
-            <button type='button' class='btn-modal-share' onclick='copyShare()'>📋 Copiar Enlace para Amigos</button>
-            <button type='button' class='btn-modal-danger' onclick='window.chrome.webview.postMessage(""STOP_HOSTING"")'>Detener Servidor</button>
-          " : @"
-            <button type='button' class='btn-modal-host' onclick='window.chrome.webview.postMessage(""START_HOSTING"")'>Iniciar mi Servidor</button>
-          ")}
+        <label class='modal-label'>Modo Anfitrión (Crear tu propio Servidor):</label>
+        <p class='modal-desc'>Abre la consola en una ventana separada para iniciar el servidor y ver los comandos en vivo estilo CMD.</p>
+        <div style='margin-top: 10px;'>
+          <button type='button' class='btn-modal-host' onclick='openHostWindow()'>🖥️ Iniciar Servidor (Abrir Consola)</button>
         </div>
       </div>" : "")}
 
@@ -1189,6 +1191,11 @@ public class MainForm : Form
           if (ch.hasPassword) {{
             pass = prompt('Ingresa la contraseña para #' + ch.roomId + ':') || '';
           }}
+          var btn = item.querySelector('.btn-join-ch');
+          if (btn) {{
+            btn.disabled = true;
+            btn.innerText = 'Entrando...';
+          }}
           joinChannel(ch.roomId, pass);
         }});
 
@@ -1211,7 +1218,19 @@ public class MainForm : Form
       var ch = (document.getElementById('customChName').value || '').trim().toLowerCase();
       var pass = (document.getElementById('customChPass').value || '').trim();
       if (ch) {{
+        var btn = document.getElementById('btnJoinMain');
+        if (btn) {{
+          btn.disabled = true;
+          btn.innerText = 'Creando...';
+        }}
         joinChannel(ch, pass);
+      }}
+    }}
+
+    function openHostWindow() {{
+      closeSettingsModal();
+      if (window.chrome && window.chrome.webview) {{
+        window.chrome.webview.postMessage('OPEN_SERVER_HOST_WINDOW');
       }}
     }}
 
@@ -1602,7 +1621,7 @@ public class MainForm : Form
         }
     }
 
-    private string? FindServerExecutable()
+    public string? FindServerExecutable()
     {
         var candidates = new[]
         {
@@ -1612,6 +1631,21 @@ public class MainForm : Form
             Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Lowcord.Server.exe")
         };
         return candidates.FirstOrDefault(File.Exists);
+    }
+
+    public void OnHostServerStarted(string room)
+    {
+        _settings.IsHosting = true;
+        _settings.ServerCode = room;
+        SaveSettings();
+        BeginInvoke(() => ShowConnectScreen());
+    }
+
+    public void OnHostServerStopped()
+    {
+        _settings.IsHosting = false;
+        SaveSettings();
+        BeginInvoke(() => ShowConnectScreen());
     }
 
     private string? GetLocalRoomCode()
@@ -1948,6 +1982,8 @@ public class MainForm : Form
     protected override void OnFormClosing(FormClosingEventArgs e)
     {
         UninstallGlobalKeyboardHook();
+
+        try { _serverHostForm?.Close(); } catch { }
 
         // Limpiar procesos de servidor y túnel al cerrar la aplicación
         try
