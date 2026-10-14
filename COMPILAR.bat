@@ -11,7 +11,7 @@ taskkill /F /IM Lowcord-Client.exe >nul 2>&1
 taskkill /F /IM Lowcord.Client.exe >nul 2>&1
 
 echo [1/2] Compilando Servidor WebRTC y Signaling...
-dotnet publish src\Lowcord.Server\Lowcord.Server.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o EJECUTABLES_LISTOS\Servidor
+dotnet publish src\Lowcord.Server\Lowcord.Server.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o dist\Servidor
 if errorlevel 1 (
     echo [ERROR] Fallo al compilar el servidor.
     pause
@@ -20,20 +20,23 @@ if errorlevel 1 (
 
 echo.
 echo [2/2] Compilando Cliente Nativo de Escritorio...
-dotnet publish src\Lowcord.Client\Lowcord.Client.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o src\Lowcord.Client\bin\publish
+dotnet publish src\Lowcord.Client\Lowcord.Client.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o dist
 if errorlevel 1 (
     echo [ERROR] Fallo al compilar el cliente.
     pause
     exit /b %errorlevel%
 )
 
-copy /y "src\Lowcord.Client\bin\publish\Lowcord.Client.exe" "EJECUTABLES_LISTOS\Lowcord-Client.exe" >nul
-xcopy /y /e /i "src\Lowcord.Server\wwwroot" "EJECUTABLES_LISTOS\Servidor\wwwroot" >nul
+REM Renombrar a Lowcord-Client.exe para compatibilidad limpia y sin duplicados
+if exist "dist\Lowcord.Client.exe" (
+    move /y "dist\Lowcord.Client.exe" "dist\Lowcord-Client.exe" >nul
+)
+if exist "dist\Lowcord.Client.pdb" del /q "dist\Lowcord.Client.pdb" >nul
 
 echo.
 echo ===================================================
 echo   Compilacion exitosa.
-echo   Ejecutables listos en la carpeta: EJECUTABLES_LISTOS\
+echo   Ejecutables listos en la carpeta: dist\
 echo ===================================================
 echo.
 pause

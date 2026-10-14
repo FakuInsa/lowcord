@@ -30,17 +30,12 @@ Lowcord/
 ├── docs/                      # Redireccionador web permanente (GitHub Pages)
 ├── src/                       # Código fuente del proyecto (.NET 9)
 │   ├── Lowcord.Server/        # Servidor de señalización SignalR y WebRTC
-│   └── Lowcord.Client/        # Cliente nativo WinForms + WebView2
-├── EJECUTABLES_LISTOS/        # Binarios y paquete portable de ejecución
-│   ├── INICIAR.bat            # Inicia servidor local, túnel y cliente nativo
-│   ├── INICIAR-SERVIDOR.bat   # Inicia solo backend y túnel (modo headless)
-│   ├── DETENER.bat            # Detiene el servidor y finaliza la llamada
-│   ├── Entrar-Por-Navegador.html # Acceso web rápido en PC
-│   └── room_code.txt.example  # Plantilla de código de sala
-├── INICIAR.bat                # Inicia Lowcord completo desde la raíz
-├── INICIAR-SERVIDOR.bat       # Inicia solo el servidor desde la raíz
-├── DETENER.bat                # Detiene el servidor y cierra la sala
-├── COMPILAR.bat               # Compila el código fuente (.NET 9)
+│   └── Lowcord.Client/        # Cliente nativo WinForms + WebView2 (Clean Architecture)
+├── dist/                      # Paquete compilado de distribución
+│   ├── Servidor/              # Backend Kestrel y Web assets
+│   ├── cloudflared.exe        # Binario oficial de túnel Cloudflare
+│   └── Lowcord-Client.exe     # Ejecutable principal
+├── COMPILAR.bat               # Compila el código fuente a dist/ (.NET 9)
 ├── Dockerfile                 # Contenedor Docker para el servidor
 ├── docker-compose.yml         # Orquestación con Docker Compose
 ├── LICENSE                    # Licencia MIT
@@ -51,16 +46,18 @@ Lowcord/
 
 ## Cómo Iniciar
 
+Todo se gestiona de forma nativa e intuitiva desde la aplicación de escritorio:
+
 ### Para el Anfitrión (Host):
-1. Ejecuta **`INICIAR.bat`**.
-2. Escribe el nombre de tu sala (letras y números, ej: `charla12`, `juegos4`) o presiona **ENTER** para usar la sugerida.
-3. El enlace con tu sala se copiará automáticamente al portapapeles.
+1. Abre **`Lowcord-Client.exe`**.
+2. En la tarjeta superior **Modo Anfitrión**, ingresa el nombre de tu canal y contraseña opcional.
+3. Haz clic en **`Iniciar Servidor`**. La app levanta el backend y el túnel automáticamente y te conecta a la llamada.
+4. Comparte el enlace directo con tus amigos mediante el botón **`Copiar Enlace`**.
 
 ### Para tus Amigos:
-- **Con la app nativa:** Abren `Lowcord-Client.exe`, escriben el nombre de la sala (ej: `charla12`) y hacen clic en **Conectar**. La app la recordará para futuras ocasiones (o pulsan `F2` para cambiarla).
+- **Con la app nativa:** Abren `Lowcord-Client.exe`, ven el canal en la lista de salas activas y hacen clic en **Unirse** (o escriben el nombre en la barra directa).
 - **Desde el Navegador (PC o Celular):** Entran directo con tu enlace:
   👉 **`https://fakuinsa.github.io/lowcord/?room=tu_sala`**
-  O entran a `https://fakuinsa.github.io/lowcord` y escriben el nombre de la sala.
 
 ---
 
@@ -75,8 +72,8 @@ COMPILAR.bat
 ```
 O manualmente mediante CLI:
 ```bash
-dotnet publish src/Lowcord.Server/Lowcord.Server.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o EJECUTABLES_LISTOS/Servidor
-dotnet publish src/Lowcord.Client/Lowcord.Client.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o src/Lowcord.Client/bin/publish
+dotnet publish src/Lowcord.Server/Lowcord.Server.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o dist/Servidor
+dotnet publish src/Lowcord.Client/Lowcord.Client.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o dist
 ```
 
 ---

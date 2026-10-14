@@ -10,6 +10,15 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <!-- SignalR Client Library -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/8.0.0/signalr.min.js"></script>
+  <script>
+    if (window.location.search && window.location.search.indexOf('autojoin=true') !== -1) {
+      document.documentElement.classList.add('autojoining');
+    }
+  </script>
+  <style>
+    html.autojoining #join-modal { display: none !important; }
+    html.autojoining #app-container { display: flex !important; }
+  </style>
 </head>
 <body>
 
@@ -33,20 +42,20 @@
         </div>
 
         <div class="input-group">
-          <label for="room-id">Canal de Voz</label>
+          <label for="room-id">Nombre del Servidor</label>
           <input type="text" id="room-id" placeholder="general" value="general" required maxlength="30" autocomplete="off">
         </div>
 
         <div class="input-group">
-          <label for="room-password">Contraseña del Canal</label>
+          <label for="room-password">Contraseña del Servidor</label>
           <input type="password" id="room-password" placeholder="Clave secreta (opcional)" autocomplete="off">
-          <small class="hint">Los participantes en este canal deben ingresar la misma contraseña.</small>
+          <small class="hint">Los participantes en este servidor deben ingresar la misma contraseña.</small>
         </div>
 
         <div id="join-error" class="error-banner" style="display: none;"></div>
 
         <button type="submit" id="btn-join" class="btn-primary">
-          <span>Unirse al Canal</span>
+          <span>Unirse al Servidor</span>
         </button>
 
         <button type="button" id="btn-disconnect-server" class="btn-secondary" style="margin-top: 10px;">
@@ -327,7 +336,7 @@
           <span id="status-text">Conectado (Mesh P2P)</span>
         </div>
         <div class="user-counter">
-          <span id="user-count">1</span> / 4 en sala
+          <span id="user-count">1</span> / 4 en el servidor
         </div>
       </div>
     </header>

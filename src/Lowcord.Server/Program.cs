@@ -29,8 +29,8 @@ var builder = WebApplication.CreateBuilder(new WebApplicationOptions
     WebRootPath = Directory.Exists(wwwrootDir) ? wwwrootDir : null
 });
 
-// 2. Forzar explícitamente a escuchar en el puerto 8080 en todas las interfaces de red
-builder.WebHost.UseUrls("http://0.0.0.0:8080");
+// 2. Escuchar exclusivamente en loopback local para evitar alertas del Firewall de Windows
+builder.WebHost.UseUrls("http://127.0.0.1:8080");
 
 // 3. Configurar SignalR
 builder.Services.AddSignalR(options =>
@@ -109,7 +109,7 @@ app.MapGet("/api/shutdown", async (IHubContext<SignalingHub> hubContext, IHostAp
 
 Console.WriteLine("====================================================");
 Console.WriteLine(" [LOWCORD] Servidor de Señalización WebRTC Iniciado");
-Console.WriteLine(" Escuchando en: http://0.0.0.0:8080");
+Console.WriteLine(" Escuchando en: http://127.0.0.1:8080");
 Console.WriteLine($" Carpeta Web: {wwwrootDir}");
 
 // Registrar canales iniciales
@@ -134,10 +134,6 @@ if (File.Exists(roomFile))
 }
 
 SignalingHub.EnsureRoomExists(initialRoom);
-if (initialRoom != "general")
-{
-    SignalingHub.EnsureRoomExists("general");
-}
 
 Console.WriteLine($" Canal inicial disponible: #{initialRoom}");
 Console.WriteLine("====================================================");

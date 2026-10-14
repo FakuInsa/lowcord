@@ -8,7 +8,8 @@
 dist/
 publish/
 releases/
-EJECUTABLES_LISTOS/Servidor/
+dist/
+dist/Servidor/
 
 # Binarios ejecutables y bibliotecas pesadas (>100MB bloqueados por GitHub)
 *.exe
@@ -30,8 +31,8 @@ cloudflared.log
 server.txt
 room_code.txt
 client_config.json
-EJECUTABLES_LISTOS/room_code.txt
-EJECUTABLES_LISTOS/client_config.json
+dist/room_code.txt
+dist/client_config.json
 
 # Entornos de desarrollo e IDEs
 .vs/
@@ -46,3 +47,8 @@ EJECUTABLES_LISTOS/client_config.json
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Documentos de planificacion local
+PLAN_*.md
+PLAN_ARQUITECTURA.md
+PLAN_FEATURES.md

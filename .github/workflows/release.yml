@@ -33,17 +33,11 @@ jobs:
 
       - name: Empaquetar archivos portables
         run: |
-          Copy-Item -Path "EJECUTABLES_LISTOS/INICIAR.bat" -Destination "release_package/INICIAR.bat" -Force
-          Copy-Item -Path "EJECUTABLES_LISTOS/INICIAR-SERVIDOR.bat" -Destination "release_package/INICIAR-SERVIDOR.bat" -Force
-          Copy-Item -Path "EJECUTABLES_LISTOS/DETENER.bat" -Destination "release_package/DETENER.bat" -Force
-          Copy-Item -Path "EJECUTABLES_LISTOS/Entrar-Por-Navegador.html" -Destination "release_package/Entrar-Por-Navegador.html" -Force
-          Copy-Item -Path "EJECUTABLES_LISTOS/iniciar_host.ps1" -Destination "release_package/iniciar_host.ps1" -Force
-          Copy-Item -Path "EJECUTABLES_LISTOS/room_code.txt.example" -Destination "release_package/room_code.txt.example" -Force
-          
           # Paquete solo cliente para amigos
           New-Item -ItemType Directory -Path "client_only" -Force
           Copy-Item -Path "release_package/Lowcord.Client.exe" -Destination "client_only/Lowcord-Client.exe" -Force
           Copy-Item -Path "release_package/Lowcord.Client.exe" -Destination "release_package/Lowcord-Client.exe" -Force
+          Remove-Item -Path "release_package/Lowcord.Client.exe" -Force -ErrorAction SilentlyContinue
           Compress-Archive -Path "client_only/*" -DestinationPath "Lowcord-Client-Windows-x64.zip" -Force
           
           # Paquete completo para anfitrion

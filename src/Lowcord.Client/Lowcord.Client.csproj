@@ -12,6 +12,13 @@
     <PublishSingleFile>true</PublishSingleFile>
     <SelfContained>false</SelfContained>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    
+    <AssemblyTitle>Lowcord</AssemblyTitle>
+    <Product>Lowcord</Product>
+    <Description>Lowcord Voice &amp; Screen Client</Description>
+    <Company>Lowcord</Company>
+    <Copyright>Copyright © 2026</Copyright>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
   </PropertyGroup>
 
   <ItemGroup>

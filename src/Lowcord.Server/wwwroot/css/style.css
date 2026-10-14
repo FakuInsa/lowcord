@@ -1641,7 +1641,7 @@ body {
   }
 }
 
-/* Panel de estadisticas de pantalla recibida */
+/* Panel de estadisticas de pantalla recibida (3 Modos: Grande, Pequeño, Oculto) */
 .screen-stats-overlay {
   position: absolute;
   left: 8px;
@@ -1656,9 +1656,42 @@ body {
   z-index: 5;
   font-family: Consolas, monospace;
   border-left: 3px solid #23a559;
+  user-select: none;
+  transition: all 0.15s ease;
 }
 .screen-stats-overlay.bad { border-left-color: #f23f43; }
-.screen-stats-overlay.collapsed .stats-extra { display: none; }
+.screen-stats-overlay .stats-icon-hidden { display: none; }
+.screen-stats-overlay .stats-content { display: inline-block; }
+
+/* Modo Pequeño: oculta los detalles técnicos secundarios */
+.screen-stats-overlay.mode-small .stats-extra,
+.screen-stats-overlay.collapsed .stats-extra {
+  display: none !important;
+}
+
+/* Modo Oculto: queda un icono minimalista discreto en la esquina */
+.screen-stats-overlay.mode-hidden {
+  padding: 3px 6px;
+  background: rgba(0, 0, 0, 0.45);
+  border-left: 2px solid #5865F2;
+  opacity: 0.35;
+  border-radius: 4px;
+}
+.screen-stats-overlay.mode-hidden:hover {
+  opacity: 1;
+  background: rgba(0, 0, 0, 0.85);
+  transform: scale(1.08);
+}
+.screen-stats-overlay.mode-hidden .stats-content {
+  display: none !important;
+}
+.screen-stats-overlay.mode-hidden .stats-icon-hidden {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  line-height: 1;
+}
 
 /* Banner de notificacion de actualizacion del Launcher */
 .update-banner {

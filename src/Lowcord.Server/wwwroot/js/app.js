@@ -252,10 +252,10 @@ function showUpdateBanner(version) {
 
     const autoJoin = urlParams.get('autojoin') === 'true';
     if (autoJoin && roomParam && savedUser) {
-      setTimeout(() => {
+      requestAnimationFrame(() => {
         const btnSubmit = document.getElementById('btn-join');
         if (btnSubmit) btnSubmit.click();
-      }, 150);
+      });
     }
   } catch (e) {}
 })();
@@ -1090,6 +1090,12 @@ function getScreenBitrate(res = screenQuality.resolution, fps = screenQuality.fp
   return tier[key] || 1500000;
 }
 
+function getMinScreenBitrate(level = screenQuality.bitrateLevel) {
+  if (level === 'low') return 400000;    // 400 Kbps para conexiones débiles
+  if (level === 'high') return 1500000;  // 1.5 Mbps para nitidez extrema
+  return 800000;                         // 800 Kbps estándar
+}
+
 // Configurar codificador WebRTC dinámicamente según la calidad y bitrate seleccionados
 function configureHighQualityVideoSender(sender) {
   try {
@@ -1099,11 +1105,13 @@ function configureHighQualityVideoSender(sender) {
     }
 
     const bitrate = getScreenBitrate(screenQuality.resolution, screenQuality.fps, screenQuality.bitrateLevel);
+    const minBitrate = getMinScreenBitrate(screenQuality.bitrateLevel);
 
     params.encodings[0].maxBitrate = bitrate;
+    params.encodings[0].minBitrate = minBitrate;
     params.encodings[0].maxFramerate = screenQuality.fps;
     params.encodings[0].networkPriority = 'high';
-    params.degradationPreference = 'maintain-framerate';
+    params.degradationPreference = 'maintain-resolution';
 
     sender.setParameters(params).catch(e => {});
   } catch(e) {}
@@ -2060,11 +2068,11 @@ function syncHotkeyWithNativeClient(code, vk) {
   if (window.chrome && window.chrome.webview) {
     try {
       const numericVk = vk || parseInt(localStorage.getItem('lowcord_keybind_vk') || '0', 10);
-      window.chrome.webview.postMessage({
+      window.chrome.webview.postMessage(JSON.stringify({
         type: 'UPDATE_HOTKEY',
         code: code,
         vk: numericVk
-      });
+      }));
       console.log(`[Lowcord] Hotkey sincronizado con cliente nativo: ${code} (vk: ${numericVk})`);
     } catch (e) {
       console.warn('Error al sincronizar hotkey con C#:', e);
@@ -2386,13 +2394,51 @@ function addScreenCard(id, title, stream) {
   updateScreenLayout();
 }
 
-// Panel de estadísticas en vivo (diagnóstico de pixelado / lag)
+// Variable global para recordar la preferencia de modo de estadísticas (0: Grande, 1: Pequeño, 2: Oculto)
+let screenStatsDisplayMode = parseInt(localStorage.getItem('lowcord_screen_stats_mode') || '0', 10);
+if (isNaN(screenStatsDisplayMode) || screenStatsDisplayMode < 0 || screenStatsDisplayMode > 2) {
+  screenStatsDisplayMode = 0;
+}
+
+// Panel de estadísticas en vivo (diagnóstico de pixelado / lag) con 3 modos: Grande / Pequeño / Oculto
 function startScreenStatsOverlay(id, card) {
   const box = document.createElement('div');
   box.className = 'screen-stats-overlay';
-  box.innerText = 'Midiendo...';
-  box.title = 'Clic para ocultar/mostrar detalles';
-  box.addEventListener('click', (e) => { e.stopPropagation(); box.classList.toggle('collapsed'); });
+  box.innerHTML = '<span class="stats-icon-hidden" title="Estadísticas de pantalla (Clic para mostrar)">📊</span><span class="stats-content">Midiendo...</span>';
+
+  const applyMode = () => {
+    box.classList.remove('mode-small', 'collapsed', 'mode-hidden');
+    if (screenStatsDisplayMode === 1) {
+      box.classList.add('mode-small', 'collapsed');
+      box.title = 'Estadísticas: Modo Pequeño (Clic para Ocultar)';
+    } else if (screenStatsDisplayMode === 2) {
+      box.classList.add('mode-hidden');
+      box.title = 'Estadísticas: Oculto (Clic para Modo Grande)';
+    } else {
+      box.title = 'Estadísticas: Modo Grande (Clic para Modo Pequeño)';
+    }
+  };
+
+  applyMode();
+
+  box.addEventListener('click', (e) => {
+    e.stopPropagation();
+    screenStatsDisplayMode = (screenStatsDisplayMode + 1) % 3;
+    try { localStorage.setItem('lowcord_screen_stats_mode', screenStatsDisplayMode); } catch (err) {}
+    document.querySelectorAll('.screen-stats-overlay').forEach(el => {
+      el.classList.remove('mode-small', 'collapsed', 'mode-hidden');
+      if (screenStatsDisplayMode === 1) {
+        el.classList.add('mode-small', 'collapsed');
+        el.title = 'Estadísticas: Modo Pequeño (Clic para Ocultar)';
+      } else if (screenStatsDisplayMode === 2) {
+        el.classList.add('mode-hidden');
+        el.title = 'Estadísticas: Oculto (Clic para Modo Grande)';
+      } else {
+        el.title = 'Estadísticas: Modo Grande (Clic para Modo Pequeño)';
+      }
+    });
+  });
+
   card.appendChild(box);
 
   let prevBytes = 0, prevTs = 0, prevLost = 0, prevRecv = 0;
@@ -2410,7 +2456,10 @@ function startScreenStatsOverlay(id, card) {
         if (r.type === 'candidate-pair' && (r.nominated || r.state === 'succeeded') && r.currentRoundTripTime !== undefined) pair = r;
         if (r.type === 'local-candidate' || r.type === 'remote-candidate') cands[r.id] = r;
       });
-      if (!inbound) { box.innerText = 'Sin video'; return; }
+      if (!inbound) {
+        box.innerHTML = '<span class="stats-icon-hidden" title="Estadísticas de pantalla: Oculto (Clic para Modo Grande)">📊</span><span class="stats-content">Sin video</span>';
+        return;
+      }
 
       const kbps = prevTs ? Math.round(((inbound.bytesReceived - prevBytes) * 8) / ((inbound.timestamp - prevTs) / 1000) / 1000) : 0;
       const dRecv = inbound.packetsReceived - prevRecv;
@@ -2429,7 +2478,11 @@ function startScreenStatsOverlay(id, card) {
       const fps = Math.round(inbound.framesPerSecond || 0);
       const res = `${inbound.frameWidth || 0}x${inbound.frameHeight || 0}`;
 
-      box.innerHTML = `<b>${res} @ ${fps}fps</b> · ${kbps} kbps<span class="stats-extra"><br>Pérdida: ${loss}% · RTT: ${rtt}ms · Jitter: ${Math.round((inbound.jitter || 0) * 1000)}ms<br>Ruta: ${route} · Decoder: ${dec}</span>`;
+      box.innerHTML = `
+        <span class="stats-icon-hidden" title="Estadísticas de pantalla: Oculto (Clic para Modo Grande)">📊</span>
+        <span class="stats-content">
+          <b>${res} @ ${fps}fps</b> · ${kbps} kbps<span class="stats-extra"><br>Pérdida: ${loss}% · RTT: ${rtt}ms · Jitter: ${Math.round((inbound.jitter || 0) * 1000)}ms<br>Ruta: ${route} · Decoder: ${dec}</span>
+        </span>`;
       box.classList.toggle('bad', parseFloat(loss) > 2 || fps < 20);
     } catch (e) {}
   }, 2000);
